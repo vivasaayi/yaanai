@@ -5,6 +5,15 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
 
+  // https://github.com/vitejs/vite/discussions/3448
+  esbuild: {
+    loader: "jsx",
+    include: /src\/.*\.jsx?$/,
+    // loader: "tsx",
+    // include: /src\/.*\.[tj]sx?$/,
+    exclude: [],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   // prevent vite from obscuring rust errors
   clearScreen: false,
