@@ -4,6 +4,9 @@ const Dashboard = React.lazy(() => import('./coreui/views/dashboard/Dashboard'))
 const Colors = React.lazy(() => import('./coreui/views/theme/colors/Colors'))
 const Typography = React.lazy(() => import('./coreui/views/theme/typography/Typography'))
 
+// Yaanai Components
+const Contacts = React.lazy(() => import('./yaanai/views/Contacts'))
+
 // Base
 const Accordion = React.lazy(() => import('./coreui/views/base/accordion/Accordion'))
 const Breadcrumbs = React.lazy(() => import('./coreui/views/base/breadcrumbs/Breadcrumbs'))
@@ -53,6 +56,12 @@ const Widgets = React.lazy(() => import('./coreui/views/widgets/Widgets'))
 const routes = [
   { path: '/', exact: true, name: 'Home' },
   { path: '/dashboard', name: 'Dashboard', element: Dashboard },
+
+
+  { path: '/contacts', name: 'Contacts', element: Contacts },
+  
+
+
   { path: '/theme', name: 'Theme', element: Colors, exact: true },
   { path: '/theme/colors', name: 'Colors', element: Colors },
   { path: '/theme/typography', name: 'Typography', element: Typography },
