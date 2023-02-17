@@ -2534,7 +2534,12 @@ dependencies = [
  "tracing-subscriber",
  "tracing-wasm",
  "wasm-bindgen-futures",
+ "yaanaiapp",
 ]
+
+[[package]]
+name = "yaanaiapp"
+version = "0.1.0"
 
 [[package]]
 name = "zbus"

@@ -15,8 +15,8 @@ impl Default for TemplateApp {
         Self {
             // Example stuff:
             // dh dsfh sdhf dsk
-            label: "Hello Rajanss11!".to_owned(),
-            value: 6.7,
+            label: helper::get_name(),
+            value: yaanaiapp::get_no(),
         }
     }
 }
@@ -113,5 +113,13 @@ impl eframe::App for TemplateApp {
                 ui.label("You would normally choose either panels OR windows.");
             });
         }
+    }
+}
+
+// extern crate yaanaiapp;
+
+pub mod helper {
+    pub fn get_name() -> String {
+        yaanaiapp::public_format_name("RAJAN")
     }
 }

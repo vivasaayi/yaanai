@@ -3190,4 +3190,9 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "yaanaiapp",
 ]
+
+[[package]]
+name = "yaanaiapp"
+version = "0.1.0"

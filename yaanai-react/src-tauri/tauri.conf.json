@@ -59,11 +59,9 @@
     },
     "windows": [
       {
-        "fullscreen": false,
-        "height": 600,
+        "maximized": true,
         "resizable": true,
-        "title": "yaanai-react",
-        "width": 800
+        "title": "Yaanai"
       }
     ]
   }
