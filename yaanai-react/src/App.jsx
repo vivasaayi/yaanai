@@ -9,12 +9,12 @@ function App() {
 
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
-    setGreetMsg(await invoke("greet", { name }));
+    setGreetMsg(await invoke("welcome", { name }));
   }
 
   return (
     <div className="container">
-      <h1>Welcome to Tauri!</h1>
+      <h1>Welcome to Yaanai!</h1>
 
       <div className="row">
         <a href="https://vitejs.dev" target="_blank">
