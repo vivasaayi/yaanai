@@ -20,10 +20,11 @@ fn welcome(name: &str) -> String {
 }
 
 extern crate yaanaiapp;
-
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![greet, welcome, fetch_files])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+// TEST 1234dsdsdasdsdssdsads
