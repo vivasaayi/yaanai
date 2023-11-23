@@ -10,6 +10,11 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
+fn fetch_files(folder_name: &str) -> Vec<String> {
+    yaanaiapp::get_files(folder_name)
+}
+
+#[tauri::command]
 fn welcome(name: &str) -> String {
     yaanaiapp::public_format_name(name)
 }
@@ -18,7 +23,7 @@ extern crate yaanaiapp;
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![greet, welcome])
+        .invoke_handler(tauri::generate_handler![greet, welcome, fetch_files])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

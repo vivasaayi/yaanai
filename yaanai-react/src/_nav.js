@@ -27,6 +27,12 @@ const _nav = [
     icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
   },
   {
+    component: CNavItem,
+    name: 'File Explorer',
+    to: '/file-explorer',
+    icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
+  },
+  {
     component: CNavTitle,
     name: 'CORE UI COMPONENTS',
   },

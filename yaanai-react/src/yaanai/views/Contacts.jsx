@@ -1,28 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import {
-  CButton,
   CCard,
   CCardBody,
-  CCardFooter,
-  CCardGroup,
   CCardHeader,
-  CCardImage,
-  CCardLink,
-  CCardSubtitle,
-  CCardText,
-  CCardTitle,
-  CListGroup,
-  CListGroupItem,
-  CNav,
-  CNavItem,
-  CNavLink,
   CCol,
   CRow,
 } from '@coreui/react'
 
 import { invoke } from "@tauri-apps/api/tauri";
-
-import ReactImg from '../../../src/assets/images/react.jpg'
 
 const Contacts = () => {
   const [name, setName] = useState();
