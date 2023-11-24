@@ -29,12 +29,12 @@ pub fn recursively_list_files<'a>(name:&'a str, vec:&'a mut Vec<String> ) -> &'a
     for dir in dirs.unwrap() {
         let dir_entry:DirEntry= dir.unwrap();
 
-        println!("{dir_entry:?}");
+        // println!("{dir_entry:?}");
 
         let dir_path:String = dir_entry.file_name().into_string().unwrap();
 
         let metadata:Metadata = dir_entry.metadata().unwrap();
-        println!("{metadata:?}");
+        // println!("{metadata:?}");
 
         if metadata.is_dir(){
             let mut child_dir_path = name.to_string();
@@ -50,7 +50,7 @@ pub fn recursively_list_files<'a>(name:&'a str, vec:&'a mut Vec<String> ) -> &'a
             result.push_str(metadata.len().to_string().as_str());
 
             vec.push(result);
-            println!("{dir_path}");
+            // println!("{dir_path}");
         }
     }
 
@@ -64,6 +64,6 @@ pub fn get_no() -> f32 {
 #[test]
 fn test_list_dirs() {
     let mut vec:Vec<String> = vec![];
-    let result = recursively_list_files("/Users/rajanp/work/music", &mut vec);
-    assert_eq!(result.len(), 40);
+    let result = recursively_list_files("/Users/rajanp/work", &mut vec);
+    assert_eq!(result.len(), 10010);
 }
