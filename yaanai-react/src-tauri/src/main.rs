@@ -12,7 +12,8 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn fetch_files(folder_name: &str) -> Vec<String> {
     let mut vec:Vec<String> = vec![];
-    yaanaiapp::recursively_list_files(folder_name, &mut vec)
+    yaanaiapp::recursively_list_files(folder_name, &mut vec);
+    vec.to_vec()
 }
 
 #[tauri::command]
@@ -28,4 +29,4 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-// TEST 1234dsdsdasdsdssdsddssadsdsds
+// TEST dsdsds

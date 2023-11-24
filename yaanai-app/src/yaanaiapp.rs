@@ -11,7 +11,7 @@ pub fn get_files(_name:&str) -> Vec<String> {
     let vec:Vec<String> = vec![];
     vec
 }
-pub fn recursively_list_files(name:&str, vec:&mut Vec<String> ) -> Vec<String> {
+pub fn recursively_list_files<'a>(name:&'a str, vec:&'a mut Vec<String> ) -> &'a mut Vec<String> {
     println!("Getting files in folder:{}", name);
 
     let dirs:std::io::Result<ReadDir> =std::fs::read_dir(name);
@@ -20,7 +20,7 @@ pub fn recursively_list_files(name:&str, vec:&mut Vec<String> ) -> Vec<String> {
         Err(error) => {
             println!("Error occurred when reading the directory {name}");
             println!("{error}");
-            return vec.to_vec();
+            return vec;
         }
 
         _ => {}
@@ -41,8 +41,8 @@ pub fn recursively_list_files(name:&str, vec:&mut Vec<String> ) -> Vec<String> {
             child_dir_path.push_str("/");
             child_dir_path.push_str(dir_path.as_str());
 
-            if vec.len()<100 {
-                recursively_list_files(&child_dir_path, &mut vec.to_vec());
+            if vec.len()<10000 {
+                recursively_list_files(&child_dir_path, vec);
             }
         } else if metadata.is_file() {
             let mut result:String = "".to_string();
@@ -54,7 +54,7 @@ pub fn recursively_list_files(name:&str, vec:&mut Vec<String> ) -> Vec<String> {
         }
     }
 
-    vec.to_vec()
+    vec
 }
 
 pub fn get_no() -> f32 {
@@ -63,7 +63,7 @@ pub fn get_no() -> f32 {
 
 #[test]
 fn test_list_dirs() {
-    let vec:Vec<String> = vec![];
-    let result = recursively_list_files("/Users/rajanp/work/music", &mut vec.to_vec());
-    assert_eq!(result.len(), 5);
+    let mut vec:Vec<String> = vec![];
+    let result = recursively_list_files("/Users/rajanp/work/music", &mut vec);
+    assert_eq!(result.len(), 40);
 }

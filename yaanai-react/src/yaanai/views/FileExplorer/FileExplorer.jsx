@@ -18,7 +18,7 @@ import ReactImg from "../../../assets/images/react.jpg";
 function FileExplorer() {
     const [files, setFiles] = useState([]);
     async function fetchFiles() {
-        const files = await invoke("fetch_files", { folderName: "/Users/rajanp/work/music" });
+        const files = await invoke("fetch_files", { folderName: "/Users/rajanp/work" });
         setFiles(files);
     }
 
