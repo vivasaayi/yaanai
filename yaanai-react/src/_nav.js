@@ -33,6 +33,12 @@ const _nav = [
     icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
   },
   {
+    component: CNavItem,
+    name: 'Disk Analyzer',
+    to: '/disk-analyzer',
+    icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
+  },
+  {
     component: CNavTitle,
     name: 'CORE UI COMPONENTS',
   },

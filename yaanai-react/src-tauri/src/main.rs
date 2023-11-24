@@ -12,7 +12,14 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn fetch_files(folder_name: &str) -> Vec<String> {
     let mut vec:Vec<String> = vec![];
-    yaanaiapp::recursively_list_files(folder_name, &mut vec);
+    yaanaiapp::fetch_files(folder_name, &mut vec);
+    vec.to_vec()
+}
+
+#[tauri::command]
+fn recursively_list_files(folder_name: &str) -> Vec<DiskEntry> {
+    let mut vec:Vec<DiskEntry> = vec![];
+    yaanaiapp::recursively_list_files_de(folder_name, &mut vec, false, true);
     vec.to_vec()
 }
 
@@ -22,11 +29,14 @@ fn welcome(name: &str) -> String {
 }
 
 extern crate yaanaiapp;
+
+use yaanaiapp::DiskEntry;
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![greet, welcome, fetch_files])
+        .invoke_handler(tauri::generate_handler![greet, welcome, fetch_files, recursively_list_files])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// TEST dsdsds
+// TEST gg

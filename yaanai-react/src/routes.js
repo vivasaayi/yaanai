@@ -7,6 +7,7 @@ const Typography = React.lazy(() => import('./coreui/views/theme/typography/Typo
 // Yaanai Components
 const Contacts = React.lazy(() => import('./yaanai/views/Contacts'))
 const FileExplorer = React.lazy(() => import('./yaanai/views/FileExplorer/FileExplorer'))
+const DiskAnalyzer = React.lazy(() => import('./yaanai/views/FileExplorer/DiskAnalyzer'))
 
 // Base
 const Accordion = React.lazy(() => import('./coreui/views/base/accordion/Accordion'))
@@ -106,6 +107,7 @@ const routes = [
   { path: '/notifications/toasts', name: 'Toasts', element: Toasts },
   { path: '/widgets', name: 'Widgets', element: Widgets },
   { path: '/file-explorer', name: 'File Explorer', element: FileExplorer },
+  { path: '/disk-analyzer', name: 'Disk Analyzer', element: DiskAnalyzer },
 ]
 
 export default routes
