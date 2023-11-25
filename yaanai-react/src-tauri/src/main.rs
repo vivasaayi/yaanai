@@ -24,6 +24,12 @@ fn recursively_list_files(folder_name: &str) -> Vec<DiskEntry> {
 }
 
 #[tauri::command]
+fn analyze_disk_usage(folder_name: &str) -> Vec<DiskEntry> {
+    let result = yaanaiapp::analyze_disk_usage(folder_name.to_string());
+    result
+}
+
+#[tauri::command]
 fn welcome(name: &str) -> String {
     yaanaiapp::public_format_name(name)
 }
@@ -34,9 +40,10 @@ use yaanaiapp::DiskEntry;
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![greet, welcome, fetch_files, recursively_list_files])
+        .invoke_handler(tauri::generate_handler![greet, welcome,
+            fetch_files, recursively_list_files, analyze_disk_usage])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// TEST gg
+// TEST ggdssdsd

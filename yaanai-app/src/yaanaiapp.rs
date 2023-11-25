@@ -28,6 +28,21 @@ impl DiskEntry {
     }
 }
 
+struct AllDiskEntries {
+    disk_entries: Vec<DiskEntry>
+}
+
+impl AllDiskEntries {
+    fn new() -> Self{
+        Self {
+            disk_entries: vec![]
+        }
+    }
+    fn add_new_disk_entry(&mut self, disk_entry: DiskEntry) {
+        self.disk_entries.push(disk_entry);
+    }
+}
+
 // impl Clone for DiskEntry {
 //     fn clone(&self) -> Self {
 //         let cl = DiskEntry{
@@ -162,6 +177,36 @@ pub fn recursively_list_files_wc<'a>(name:&'a str, vec:&'a mut Vec<String>, recu
     vec
 }
 
+pub fn analyze_disk_usage(folder_name:String) -> Vec<DiskEntry> {
+    let mut all_disk_entries = AllDiskEntries::new();
+
+    let mut folders:Vec<String>=vec![];
+    folders.push(folder_name);
+
+    while folders.len() > 0 {
+        let path = folders.pop().unwrap();
+        println!("Analyzing folder:{path}");
+
+        let mut disk_entries:Vec<DiskEntry>=vec![];
+        let result = recursively_list_files_de(path.as_str(), &mut disk_entries,false,true);
+
+        for de in result {
+            all_disk_entries.add_new_disk_entry(de.to_owned());
+
+            if de.is_file {
+                continue
+            }
+
+            folders.push(de.path.clone());
+        }
+
+
+        disk_entries.clear()
+    }
+
+    return all_disk_entries.disk_entries
+}
+
 pub fn recursively_list_files<'a>(name:&'a str, vec:&'a mut Vec<String> ) -> &'a mut Vec<String> {
     println!("Getting files in folder:{}", name);
 
@@ -225,5 +270,11 @@ fn test_recursively_list_files_de() {
     let result = recursively_list_files_de(
         "/Users/rajanp/work/music",
               &mut vec, true, true);
+    assert_eq!(result.len(), 52);
+}
+
+#[test]
+fn test_analyze_disk_usage() {
+    let result = analyze_disk_usage("/Users/rajanp/work/music".to_string());
     assert_eq!(result.len(), 52);
 }
