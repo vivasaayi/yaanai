@@ -76,6 +76,7 @@ function DiskAnalyzer() {
                             <Column dataField="name" cellRender={renderFileName}/>
                             <Column dataField="path" />
                             <Column dataField="size" />
+                            <Column dataField="size_h" />
                             <Column dataField="is_dir" />
                             <Column dataField="is_file" />
                         </DataGrid>
