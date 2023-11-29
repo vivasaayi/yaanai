@@ -64,11 +64,6 @@ pub fn public_format_name(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust, YANAIAPP CRETE!", name)
 }
 
-pub fn fetch_files<'a>(name:&'a str, vec:&'a mut Vec<String> ) -> &'a mut Vec<String> {
-    let result =recursively_list_files_wc(name, vec, false, true);
-    return result
-}
-
 pub fn recursively_list_files_de<'a>(name:&'a str, vec:&'a mut Vec<DiskEntry>, recurse:bool, include_dirs:bool)
     -> &'a mut Vec<DiskEntry> {
     println!("Getting files in folder:{}", name);
@@ -120,59 +115,6 @@ pub fn recursively_list_files_de<'a>(name:&'a str, vec:&'a mut Vec<DiskEntry>, r
             // vec.push(disk_entry);
 
             vec.push(disk_entry);
-            // println!("{dir_path}");
-        }
-    }
-
-    vec
-}
-
-pub fn recursively_list_files_wc<'a>(name:&'a str, vec:&'a mut Vec<String>, recurse:bool, includeDirs:bool) -> &'a mut Vec<String> {
-    println!("Getting files in folder:{}", name);
-
-    let dirs:std::io::Result<ReadDir> =std::fs::read_dir(name);
-
-    match dirs {
-        Err(error) => {
-            println!("Error occurred when reading the directory {name}");
-            println!("{error}");
-            return vec;
-        }
-
-        _ => {}
-    }
-
-    for dir in dirs.unwrap() {
-        let dir_entry:DirEntry= dir.unwrap();
-
-        // println!("{dir_entry:?}");
-
-        let dir_path:String = dir_entry.file_name().into_string().unwrap();
-
-        let metadata:Metadata = dir_entry.metadata().unwrap();
-        // println!("{metadata:?}");
-
-        if metadata.is_dir(){
-            let mut child_dir_path = name.to_string();
-            child_dir_path.push_str("/");
-            child_dir_path.push_str(dir_path.as_str());
-
-            if vec.len()<10000 && recurse {
-                recursively_list_files(&child_dir_path, vec);
-            }
-
-            if includeDirs {
-                let mut result:String = "".to_string();
-                result.push_str(dir_path.clone().as_str());
-
-                vec.push(result);
-            }
-        } else if metadata.is_file() {
-            let mut result:String = "".to_string();
-            result.push_str(dir_path.clone().as_str());
-            result.push_str(metadata.len().to_string().as_str());
-
-            vec.push(result);
             // println!("{dir_path}");
         }
     }
