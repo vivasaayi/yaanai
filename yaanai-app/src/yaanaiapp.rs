@@ -1,64 +1,13 @@
 mod tests;
+mod types;
+
 
 use std::io::Error;
 use std::fs::{DirEntry, Metadata, ReadDir};
 use std::os::macos::fs::MetadataExt;
-use bytesize::{GB, KB, MB};
+use self::types::{DiskEntry, AllDiskEntries};
+
 use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct DiskEntry {
-    name: String,
-    path: String,
-    size: u64,
-    size_h: String,
-    is_dir: bool,
-    is_file: bool,
-}
-
-impl DiskEntry {
-    fn new(dir:&DirEntry) -> Self {
-        let meta_data = dir.metadata().unwrap();
-
-        Self{
-            name: dir.file_name().into_string().unwrap(),
-            path: dir.path().into_os_string().to_str().unwrap().to_string(),
-            size: meta_data.len(),
-            size_h: bytesize::ByteSize::b(meta_data.len()).to_string(),
-            is_dir: meta_data.is_dir(),
-            is_file: meta_data.is_file()
-        }
-    }
-}
-
-struct AllDiskEntries {
-    disk_entries: Vec<DiskEntry>
-}
-
-impl AllDiskEntries {
-    fn new() -> Self{
-        Self {
-            disk_entries: vec![]
-        }
-    }
-    fn add_new_disk_entry(&mut self, disk_entry: DiskEntry) {
-        self.disk_entries.push(disk_entry);
-    }
-}
-
-// impl Clone for DiskEntry {
-//     fn clone(&self) -> Self {
-//         let cl = DiskEntry{
-//             name: "".to_string(),
-//             path: "".to_string(),
-//             size: 0,
-//             is_dir: false,
-//             is_file: false,
-//         };
-//
-//         cl
-//     }
-// }
 
 pub fn public_format_name(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust, YANAIAPP CRETE!", name)
