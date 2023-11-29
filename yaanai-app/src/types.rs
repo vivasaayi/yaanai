@@ -14,6 +14,17 @@ pub struct DiskEntry {
 
 
 impl DiskEntry {
+    pub fn new_from_empty() -> Self {
+        Self{
+            name: String::new(),
+            path: String::new(),
+            size: 0,
+            size_h: String::new(),
+            is_dir: false,
+            is_file: false
+        }
+    }
+
     pub fn new(dir:&DirEntry) -> Self {
         let meta_data = dir.metadata().unwrap();
 
@@ -25,6 +36,10 @@ impl DiskEntry {
             is_dir: meta_data.is_dir(),
             is_file: meta_data.is_file()
         }
+    }
+
+    pub fn calculate_human_size(&mut self) {
+        self.size_h = bytesize::ByteSize::b(self.size).to_string()
     }
 }
 

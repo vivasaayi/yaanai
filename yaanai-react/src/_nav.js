@@ -32,6 +32,12 @@ const _nav = [
     to: '/disk-analyzer',
     icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
   },
+  {
+    component: CNavItem,
+    name: 'File Tree',
+    to: '/file-tree',
+    icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
+  },
 ]
 
 export default _nav

@@ -23,20 +23,27 @@ fn analyze_disk_usage(folder_name: &str) -> Vec<DiskEntry> {
 }
 
 #[tauri::command]
+fn get_file_tree(folder_name: &str) -> yaanaiapp::recursive_tree_builder::TreeNode {
+    let result = yaanaiapp::recursive_tree_builder::build_tree_using_recursion(folder_name);
+    result
+}
+
+#[tauri::command]
 fn welcome(name: &str) -> String {
     yaanaiapp::public_format_name(name)
 }
 
 extern crate yaanaiapp;
 
-use yaanaiapp::DiskEntry;
+use yaanaiapp::types::DiskEntry;
 
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![greet, welcome,
-            recursively_list_files, analyze_disk_usage])
+            recursively_list_files, analyze_disk_usage,
+            get_file_tree])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// TEST saaåßsasasadsdsdsds
+// TEST ds

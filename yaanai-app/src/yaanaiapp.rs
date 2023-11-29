@@ -1,5 +1,6 @@
 mod tests;
-mod types;
+pub mod types;
+pub mod recursive_tree_builder;
 
 
 use std::io::Error;
