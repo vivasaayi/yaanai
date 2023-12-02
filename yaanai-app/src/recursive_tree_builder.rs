@@ -39,53 +39,83 @@ impl TreeNode {
     }
 }
 
-pub fn build_tree_using_recursion(name:&str) -> TreeNode {
-    let mut node = TreeNode::new();
-    node.node_type = NodeType::Directory;
-    recursively_build_file_tree(name, &mut node);
-    return node
+pub struct RecursiveFileTreeBuilder {
+    pub root_node:TreeNode,
+    pub tree_builder_errors:Vec<String>
 }
 
-pub fn recursively_build_file_tree<'a>(name:&'a str, parent_node:&'a mut TreeNode){
-    println!("Getting files in folder:{}", name);
-
-    let dirs:std::io::Result<ReadDir> =std::fs::read_dir(name);
-
-    match dirs {
-        Err(error) => {
-            println!("Error occurred when reading the directory {name}");
-            println!("{error}");
-            return;
+impl RecursiveFileTreeBuilder {
+    pub fn new() -> Self {
+        return RecursiveFileTreeBuilder {
+            root_node: TreeNode::new(),
+            tree_builder_errors: vec![]
         }
-
-        _ => {}
     }
 
-    for dir in dirs.unwrap() {
-        let dir_entry:DirEntry= dir.unwrap();
+    pub fn build_tree_using_recursion(&mut self, name: &str){
+        let mut tree_node = TreeNode::new();
+        tree_node.node_type = NodeType::Directory;
 
-        let dir_path:String = dir_entry.file_name().into_string().unwrap();
+        self.recursively_build_file_tree(name, &mut tree_node);
 
-        let metadata:Metadata = dir_entry.metadata().unwrap();
+        self.root_node = tree_node;
+    }
 
-        let mut child_tree_node = TreeNode::new();
-        if metadata.is_dir(){
-            child_tree_node.node_type = NodeType::Directory;
-            child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
+    pub fn recursively_build_file_tree<'a>(&mut self, name: &'a str, parent_node: &'a mut TreeNode) {
+        println!("Getting files in folder:{}", name);
 
-            let mut child_dir_path = name.to_string();
-            child_dir_path.push_str("/");
-            child_dir_path.push_str(dir_path.as_str());
+        let dirs: std::io::Result<ReadDir> = std::fs::read_dir(name);
 
-            recursively_build_file_tree(&child_dir_path, &mut child_tree_node);
-            parent_node.disk_entry.size += child_tree_node.disk_entry.size;
-        } else if metadata.is_file() {
-            child_tree_node.node_type = NodeType::File;
-            child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
-            parent_node.disk_entry.size += child_tree_node.disk_entry.size;
+        match dirs {
+            Err(error) => {
+                self.tree_builder_errors.push("Error occurred when reading the directory {name}".to_string());
+                println!("Error occurred when reading the directory {name}");
+                println!("{error}");
+                return;
+            }
+
+            _ => {}
         }
 
-        parent_node.disk_entry.calculate_human_size();
-        parent_node.children.push(child_tree_node);
+        for dir in dirs.unwrap() {
+            let dir_entry: DirEntry = dir.unwrap();
+
+            let dir_path: String = dir_entry.file_name().into_string().unwrap();
+
+            let metadata = dir_entry.metadata();
+
+            match metadata {
+                Err(error) => {
+                    self.tree_builder_errors.push("Unable to get metadata for {name}".to_string());
+                    println!("Error occurred when reading the directory {name}");
+                    println!("{error}");
+                    return;
+                }
+
+                _ => {}
+            }
+
+            let metadata = metadata.unwrap();
+
+            let mut child_tree_node = TreeNode::new();
+            if metadata.is_dir() {
+                child_tree_node.node_type = NodeType::Directory;
+                child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
+
+                let mut child_dir_path = name.to_string();
+                child_dir_path.push_str("/");
+                child_dir_path.push_str(dir_path.as_str());
+
+                self.recursively_build_file_tree(&child_dir_path, &mut child_tree_node);
+                parent_node.disk_entry.size += child_tree_node.disk_entry.size;
+            } else if metadata.is_file() {
+                child_tree_node.node_type = NodeType::File;
+                child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
+                parent_node.disk_entry.size += child_tree_node.disk_entry.size;
+            }
+
+            parent_node.disk_entry.calculate_human_size();
+            parent_node.children.push(child_tree_node);
+        }
     }
 }
