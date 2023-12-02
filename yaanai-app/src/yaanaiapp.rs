@@ -1,6 +1,7 @@
 mod tests;
 pub mod types;
 pub mod recursive_tree_builder;
+pub mod file_manager;
 
 
 use std::io::Error;
@@ -11,7 +12,7 @@ use self::types::{DiskEntry, AllDiskEntries};
 use serde::{Deserialize, Serialize};
 
 pub fn public_format_name(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust, YANAIAPP CRETE!", name)
+    format!("Hello, {}!", name)
 }
 
 pub fn recursively_list_files_de<'a>(name:&'a str, vec:&'a mut Vec<DiskEntry>, recurse:bool, include_dirs:bool)

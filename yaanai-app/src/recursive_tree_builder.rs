@@ -5,6 +5,8 @@ use std::os::macos::fs::MetadataExt;
 use serde::{Deserialize, Serialize};
 use crate::types::DiskEntry;
 use std::collections::HashMap;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum NodeType {
@@ -43,7 +45,8 @@ impl TreeNode {
 pub struct RecursiveFileTreeBuilder {
     pub root_node:TreeNode,
     pub tree_builder_errors:Vec<String>,
-    pub files_map: HashMap<String, Vec<TreeNode>>
+    pub files_map: HashMap<String, Vec<TreeNode>>,
+    bg_thread_running:bool
 
 }
 
@@ -52,7 +55,8 @@ impl RecursiveFileTreeBuilder {
         return RecursiveFileTreeBuilder {
             root_node: TreeNode::new(),
             tree_builder_errors: vec![],
-            files_map: HashMap::new()
+            files_map: HashMap::new(),
+            bg_thread_running: false
         }
     }
 
@@ -77,6 +81,24 @@ impl RecursiveFileTreeBuilder {
         }
 
         dupes
+    }
+
+    pub fn start_bg_thread(&mut self) {
+        if self.bg_thread_running {
+            println!("Background thread is already running..");
+            return
+        }
+
+        println!("Background thread is NOT running..");
+
+        thread::spawn(|| {
+            for i in 0..500000 {
+                println!("Loop 2 iteration: {}", i);
+                thread::sleep(Duration::from_millis(5000));
+            }
+        });
+
+        self.bg_thread_running = true;
     }
 
     pub fn recursively_build_file_tree<'a>(&mut self, name: &'a str, parent_node: &'a mut TreeNode) {

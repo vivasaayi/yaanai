@@ -35,7 +35,7 @@ import 'devextreme/dist/css/dx.light.css';
 function TreeBuilder() {
     const [files, setFiles] = useState([]);
     async function fetchFiles() {
-        const files = await invoke("get_file_tree", { folderName: "/Users/rajanp" });
+        const files = await invoke("get_file_tree", { folderName: "/Users/rajanp/work/music" });
         console.log(files)
         setFiles(files);
     }
