@@ -4,6 +4,7 @@ use std::fs::{DirEntry, Metadata, ReadDir};
 use std::os::macos::fs::MetadataExt;
 use serde::{Deserialize, Serialize};
 use crate::types::DiskEntry;
+use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum NodeType {
@@ -41,14 +42,17 @@ impl TreeNode {
 
 pub struct RecursiveFileTreeBuilder {
     pub root_node:TreeNode,
-    pub tree_builder_errors:Vec<String>
+    pub tree_builder_errors:Vec<String>,
+    pub files_map: HashMap<String, Vec<TreeNode>>
+
 }
 
 impl RecursiveFileTreeBuilder {
     pub fn new() -> Self {
         return RecursiveFileTreeBuilder {
             root_node: TreeNode::new(),
-            tree_builder_errors: vec![]
+            tree_builder_errors: vec![],
+            files_map: HashMap::new()
         }
     }
 
@@ -59,6 +63,20 @@ impl RecursiveFileTreeBuilder {
         self.recursively_build_file_tree(name, &mut tree_node);
 
         self.root_node = tree_node;
+    }
+
+    pub fn get_duplicate_files(&self) -> Vec<TreeNode>{
+        let mut dupes:Vec<TreeNode> = vec![];
+
+        for nodes in self.files_map.values() {
+            if(nodes.len() > 1) {
+                for node in nodes.iter() {
+                    dupes.push(node.clone());
+                }
+            }
+        }
+
+        dupes
     }
 
     pub fn recursively_build_file_tree<'a>(&mut self, name: &'a str, parent_node: &'a mut TreeNode) {
@@ -112,6 +130,25 @@ impl RecursiveFileTreeBuilder {
                 child_tree_node.node_type = NodeType::File;
                 child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
                 parent_node.disk_entry.size += child_tree_node.disk_entry.size;
+
+                let key = dir_path + child_tree_node.disk_entry.size.to_string().as_str();
+                let key = key.as_str();
+
+                let result = self.files_map.get_mut(key);
+
+                match result {
+                    None => {
+                        let mut new_vec:Vec<TreeNode> = vec![];
+
+                        new_vec.push(child_tree_node.clone());
+
+                        self.files_map.insert(key.to_string(), new_vec);
+                    }
+
+                    Some(hm) => {
+                        hm.push(child_tree_node.clone())
+                    }
+                }
             }
 
             parent_node.disk_entry.calculate_human_size();

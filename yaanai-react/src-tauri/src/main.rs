@@ -30,6 +30,13 @@ fn get_file_tree(folder_name: &str) -> yaanaiapp::recursive_tree_builder::TreeNo
 }
 
 #[tauri::command]
+fn get_files_map(folder_name: &str) -> Vec<yaanaiapp::recursive_tree_builder::TreeNode> {
+    let mut file_tree_builder = yaanaiapp::recursive_tree_builder::RecursiveFileTreeBuilder::new();
+    file_tree_builder.build_tree_using_recursion(folder_name);
+    file_tree_builder.get_duplicate_files()
+}
+
+#[tauri::command]
 fn welcome(name: &str) -> String {
     yaanaiapp::public_format_name(name)
 }
@@ -42,9 +49,9 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![greet, welcome,
             recursively_list_files, analyze_disk_usage,
-            get_file_tree])
+            get_file_tree, get_files_map])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// TEST
+//dsdds
