@@ -80,6 +80,7 @@ function FileMap() {
                         <CButton onClick={fetchFiles}>Fetch Files</CButton>
 
                         <DataGrid id="dataGrid"
+                                  allowColumnResizing={true}
                                   dataSource={files}>
                             <Column dataField="disk_entry.name" cellRender={renderFileName}/>
                             <Column dataField="disk_entry.path" />

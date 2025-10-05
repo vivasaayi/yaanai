@@ -33,8 +33,8 @@ fn analyze_disk_usage(folder_name: &str) -> Vec<DiskEntry> {
 #[tauri::command]
 fn get_file_tree(folder_name: &str) -> yaanaiapp::recursive_tree_builder::TreeNode {
     let mut file_tree_builder = yaanaiapp::recursive_tree_builder::RecursiveFileTreeBuilder::new();
-    file_tree_builder.start_bg_thread();
-    // file_tree_builder.build_tree_using_recursion(folder_name);
+    // file_tree_builder.start_bg_thread();
+    file_tree_builder.build_tree_using_recursion(folder_name);
     file_tree_builder.root_node
 }
 
@@ -83,4 +83,4 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-//ds
+//

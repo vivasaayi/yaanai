@@ -102,7 +102,23 @@ impl RecursiveFileTreeBuilder {
     }
 
     pub fn recursively_build_file_tree<'a>(&mut self, name: &'a str, parent_node: &'a mut TreeNode) {
-        println!("Getting files in folder:{}", name);
+        // println!("Getting files in folder:{}", name);
+
+        if name.contains("/Users/rajanp/Library") {
+            return
+        }
+
+
+        if name.ends_with(".npm") ||name.ends_with(".m2") || name.ends_with(".git") || name.ends_with("node_modules") || name.ends_with(".cargo")
+            || name.ends_with(".nuget") || name.ends_with(".rustup") || name.ends_with(".vscode")
+        || name.ends_with(".gradle") || name.ends_with("target/release") || name.ends_with("target/debug")
+        || name.ends_with("Movies/CacheClip") ||  name.ends_with("bin/Release") || name.ends_with("bin/Debug")
+        || name.ends_with("tests/wpt") || name.ends_with("obj/Release") || name.ends_with("bin/Release")||
+            name.ends_with("rajanp/Applications") || name.ends_with("rajanp/work") || name.ends_with("Render Files/Peaks Data")
+            || name.ends_with("Documents/projects") || name.ends_with("AndroidStudioProjects"){
+
+            return
+        }
 
         let dirs: std::io::Result<ReadDir> = std::fs::read_dir(name);
 
