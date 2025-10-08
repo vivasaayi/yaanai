@@ -1,5 +1,6 @@
 import {invoke} from "@tauri-apps/api/tauri";
-import React, {useState} from "react";
+import {open} from "@tauri-apps/api/dialog";
+import React, {useState, useEffect} from "react";
 import {
     CButton,
     CCard,
@@ -27,10 +28,60 @@ import 'devextreme/dist/css/dx.light.css';
 
 function DiskAnalyzer() {
     const [files, setFiles] = useState([]);
+    const [currentPath, setCurrentPath] = useState("");
+    const [loading, setLoading] = useState(true);
+
+    async function getHomeDirectory() {
+        try {
+            const homeDir = await invoke("get_home_directory");
+            setCurrentPath(homeDir);
+        } catch (error) {
+            console.error("Failed to get home directory:", error);
+            // Fallback to root directory
+            setCurrentPath("/");
+        }
+    }
+
+    async function chooseFolder() {
+        try {
+            const selected = await open({
+                directory: true,
+                multiple: false,
+                defaultPath: currentPath || undefined,
+            });
+            if (selected) {
+                setCurrentPath(selected);
+            }
+        } catch (error) {
+            console.error("Failed to open folder picker:", error);
+        }
+    }
+
+    useEffect(() => {
+        getHomeDirectory();
+    }, []);
+
+    useEffect(() => {
+        if (currentPath) {
+            fetchFiles();
+        }
+    }, [currentPath]);
+
     async function fetchFiles() {
-        const files = await invoke("analyze_disk_usage", { folderName: "/Users/rajanp/music" });
-        console.log(files)
-        setFiles(files);
+        if (!currentPath) return;
+        
+        setLoading(true);
+        try {
+            console.log("Analyzing disk usage for:", currentPath);
+            const files = await invoke("analyze_disk_usage", { folderName: currentPath });
+            console.log("Disk analysis received:", files);
+            setFiles(files);
+        } catch (error) {
+            console.error("Failed to analyze disk:", error);
+            setFiles([]);
+        } finally {
+            setLoading(false);
+        }
     }
 
     function handlePathChange(e) {
@@ -67,12 +118,15 @@ function DiskAnalyzer() {
             <CCol xs={12}>
                 <CCard className="mb-4">
                     <CCardHeader>
-                        File Explorer
+                        Disk Analyzer
                     </CCardHeader>
                     <CCardBody>
-                        <CButton onClick={fetchFiles}>Fetch Files</CButton>
+                        <CButton onClick={chooseFolder} color="primary" className="me-2">Choose Folder</CButton>
+                        <CButton onClick={fetchFiles} className="me-2">Refresh</CButton>
+                        <div className="mt-2">{files.length} items analyzed in: {currentPath}</div>
                         <DataGrid id="dataGrid"
-                                  dataSource={files}>
+                                  dataSource={files}
+                                  className="mt-3">
                             <Column dataField="name" cellRender={renderFileName}/>
                             <Column dataField="path" />
                             <Column dataField="size" />

@@ -31,18 +31,21 @@ fn analyze_disk_usage(folder_name: &str) -> Vec<DiskEntry> {
 }
 
 #[tauri::command]
-fn get_file_tree(folder_name: &str) -> yaanaiapp::recursive_tree_builder::TreeNode {
-    let mut file_tree_builder = yaanaiapp::recursive_tree_builder::RecursiveFileTreeBuilder::new();
-    // file_tree_builder.start_bg_thread();
-    file_tree_builder.build_tree_using_recursion(folder_name);
-    file_tree_builder.root_node
+async fn get_file_tree(folder_name: &str, state: tauri::State<'_, FileManagerState>) -> Result<yaanaiapp::recursive_tree_builder::TreeNode, String> {
+    state.file_manager.get_file_tree_async(folder_name.to_string()).await
 }
 
 #[tauri::command]
-fn get_files_map(folder_name: &str) -> Vec<yaanaiapp::recursive_tree_builder::TreeNode> {
-    let mut file_tree_builder = yaanaiapp::recursive_tree_builder::RecursiveFileTreeBuilder::new();
-    file_tree_builder.build_tree_using_recursion(folder_name);
-    file_tree_builder.get_duplicate_files()
+async fn get_files_map(folder_name: &str, state: tauri::State<'_, FileManagerState>) -> Result<Vec<yaanaiapp::recursive_tree_builder::TreeNode>, String> {
+    // First build the tree
+    state.file_manager.get_file_tree_async(folder_name.to_string()).await?;
+    // Then get duplicates
+    state.file_manager.get_duplicates_async().await
+}
+
+#[tauri::command]
+fn get_home_directory() -> String {
+    std::env::var("HOME").unwrap_or_else(|_| std::env::var("USERPROFILE").unwrap_or_else(|_| "/".to_string()))
 }
 
 extern crate yaanaiapp;
@@ -70,7 +73,8 @@ impl FileManagerState {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut file_manager_state = FileManagerState::new();
     file_manager_state.init();
 
@@ -78,7 +82,7 @@ fn main() {
         .manage(file_manager_state)
         .invoke_handler(tauri::generate_handler![welcome,
             recursively_list_files, analyze_disk_usage,
-            get_file_tree, get_files_map])
+            get_file_tree, get_files_map, get_home_directory])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

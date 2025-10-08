@@ -1,5 +1,6 @@
 import {invoke} from "@tauri-apps/api/tauri";
-import React, {useState} from "react";
+import {open} from "@tauri-apps/api/dialog";
+import React, {useState, useEffect} from "react";
 import {
     CButton,
     CCard,
@@ -34,10 +35,60 @@ import 'devextreme/dist/css/dx.light.css';
 
 function TreeBuilder() {
     const [files, setFiles] = useState([]);
+    const [currentPath, setCurrentPath] = useState("");
+    const [loading, setLoading] = useState(true);
+
+    async function getHomeDirectory() {
+        try {
+            const homeDir = await invoke("get_home_directory");
+            setCurrentPath(homeDir);
+        } catch (error) {
+            console.error("Failed to get home directory:", error);
+            // Fallback to root directory
+            setCurrentPath("/");
+        }
+    }
+
+    async function chooseFolder() {
+        try {
+            const selected = await open({
+                directory: true,
+                multiple: false,
+                defaultPath: currentPath || undefined,
+            });
+            if (selected) {
+                setCurrentPath(selected);
+            }
+        } catch (error) {
+            console.error("Failed to open folder picker:", error);
+        }
+    }
+
+    useEffect(() => {
+        getHomeDirectory();
+    }, []);
+
+    useEffect(() => {
+        if (currentPath) {
+            fetchFiles();
+        }
+    }, [currentPath]);
+
     async function fetchFiles() {
-        const files = await invoke("get_file_tree", { folderName: "/Users/rajanp" });
-        console.log(files)
-        setFiles(files);
+        if (!currentPath) return;
+        
+        setLoading(true);
+        try {
+            console.log("Fetching tree for:", currentPath);
+            const files = await invoke("get_file_tree", { folderName: currentPath });
+            console.log("Tree received:", files);
+            setFiles(files);
+        } catch (error) {
+            console.error("Failed to fetch tree:", error);
+            setFiles([]);
+        } finally {
+            setLoading(false);
+        }
     }
 
     function handlePathChange(e) {
@@ -77,14 +128,16 @@ function TreeBuilder() {
                         Tree Builder
                     </CCardHeader>
                     <CCardBody>
-                        <CButton onClick={fetchFiles}>Fetch Files</CButton>
+                        <CButton onClick={chooseFolder} color="primary" className="me-2">Choose Folder</CButton>
+                        <CButton onClick={fetchFiles} className="me-2">Refresh</CButton>
+                        <div className="mt-2">{files.children ? files.children.length : 0} items in: {currentPath}</div>
                         <TreeList
-                            dataSource={[files]}
+                            dataSource={files.children || []}
                             showBorders={true}
                             columnAutoWidth={true}
                             wordWrapEnabled={true}
-                            keyExpr="Task_ID"
-                            parentIdExpr="Task_Parent_ID"
+                            keyExpr="disk_entry.path"
+                            parentIdExpr="disk_entry.path"
                             id="tasks"
                             dataStructure="tree"
                             itemsExpr="children"
