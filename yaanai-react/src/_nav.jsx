@@ -38,6 +38,12 @@ const _nav = [
     to: '/file-tree',
     icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
   },
+  {
+    component: CNavItem,
+    name: 'File Map',
+    to: '/file-map',
+    icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
+  },
 ]
 
 export default _nav

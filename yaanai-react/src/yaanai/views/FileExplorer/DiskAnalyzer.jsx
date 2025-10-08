@@ -1,5 +1,7 @@
 import {invoke} from "@tauri-apps/api/tauri";
-import React, {useState} from "react";
+import {open} from "@tauri-apps/api/dialog";
+import React, {useState, useEffect} from "react";
+import { useFileSystem } from './FileSystemContext';
 import {
     CButton,
     CCard,
@@ -25,12 +27,53 @@ import {
 
 import 'devextreme/dist/css/dx.light.css';
 
+// Add custom styles for animations
+const styles = `
+    .spin {
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+`;
+
+// Inject styles
+if (typeof document !== 'undefined') {
+    const styleSheet = document.createElement("style");
+    styleSheet.type = "text/css";
+    styleSheet.innerText = styles;
+    document.head.appendChild(styleSheet);
+}
+
 function DiskAnalyzer() {
+    const {
+        currentPath,
+        loading,
+        setCurrentPath,
+        analyzeDiskUsage,
+        chooseFolder
+    } = useFileSystem();
+
     const [files, setFiles] = useState([]);
+
+    // Update local files when analysis is run
+    useEffect(() => {
+        if (files.length > 0) {
+            // Files are already set from the analysis
+        }
+    }, [files]);
+
     async function fetchFiles() {
-        const files = await invoke("analyze_disk_usage", { folderName: "/Users/rajanp/music" });
-        console.log(files)
-        setFiles(files);
+        try {
+            const diskUsage = await analyzeDiskUsage();
+            if (diskUsage) {
+                setFiles(diskUsage);
+            }
+        } catch (error) {
+            setFiles([]);
+        }
     }
 
     function handlePathChange(e) {
@@ -67,12 +110,63 @@ function DiskAnalyzer() {
             <CCol xs={12}>
                 <CCard className="mb-4">
                     <CCardHeader>
-                        File Explorer
+                        Disk Analyzer
                     </CCardHeader>
                     <CCardBody>
-                        <CButton onClick={fetchFiles}>Fetch Files</CButton>
+                        {/* Control Panel */}
+                        <div className="mb-3">
+                            <div className="d-flex gap-2 align-items-center mb-2">
+                                <CButton onClick={chooseFolder} color="secondary" size="sm">
+                                    <CIcon icon="cil-folder" className="me-1" />Choose Folder
+                                </CButton>
+                                
+                                <div className="flex-grow-1">
+                                    <input
+                                        type="text"
+                                        className="form-control form-control-sm"
+                                        value={currentPath}
+                                        onChange={(e) => setCurrentPath(e.target.value)}
+                                        placeholder="Enter folder path..."
+                                        disabled={loading}
+                                    />
+                                </div>
+                                
+                                <CButton 
+                                    onClick={fetchFiles} 
+                                    color={files.length > 0 ? "success" : "primary"}
+                                    disabled={loading || !currentPath}
+                                    size="sm"
+                                >
+                                    {loading ? (
+                                        <>
+                                            <CIcon icon="cil-sync" className="spin me-1" />
+                                            Analyzing...
+                                        </>
+                                    ) : files.length > 0 ? (
+                                        <>
+                                            <CIcon icon="cil-refresh" className="me-1" />
+                                            Re-analyze
+                                        </>
+                                    ) : (
+                                        <>
+                                            <CIcon icon="cil-chart-pie" className="me-1" />
+                                            Analyze Disk
+                                        </>
+                                    )}
+                                </CButton>
+                            </div>
+                            
+                            {/* Status indicator */}
+                            {currentPath && !loading && (
+                                <div className="small text-muted">
+                                    <CIcon icon={files.length > 0 ? "cil-check-circle" : "cil-clock"} className={`me-1 ${files.length > 0 ? 'text-success' : 'text-warning'}`} />
+                                    {files.length > 0 ? `${files.length} items analyzed` : 'Ready to analyze - click "Analyze Disk" to begin'}
+                                </div>
+                            )}
+                        </div>
                         <DataGrid id="dataGrid"
-                                  dataSource={files}>
+                                  dataSource={files}
+                                  className="mt-3">
                             <Column dataField="name" cellRender={renderFileName}/>
                             <Column dataField="path" />
                             <Column dataField="size" />

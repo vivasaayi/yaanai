@@ -14,11 +14,23 @@ import {
     CCol, CListGroup, CListGroupItem, CNav, CNavItem, CNavLink, CRow
 } from "@coreui/react";
 
-import CIcon from '@coreui/icons-react';
-import { cilFolder, cilFile } from '@coreui/icons';
-
 import {DocsExample} from "../../../coreui/components/index.js";
 import ReactImg from "../../../assets/images/react.jpg";
+
+import CIcon from "@coreui/icons-react";
+import {cilFile, cilFolder} from "@coreui/icons";
+
+import {
+    DataGrid,
+    Column
+} from 'devextreme-react/data-grid';
+
+import { Template } from 'devextreme-react/core/template';
+
+import TreeList, {
+    Column as TreeListColumn, ColumnChooser, HeaderFilter, SearchPanel, Selection, Lookup,
+} from 'devextreme-react/tree-list';
+
 
 import 'devextreme/dist/css/dx.light.css';
 
@@ -42,79 +54,39 @@ if (typeof document !== 'undefined') {
     document.head.appendChild(styleSheet);
 }
 
-import {
-    DataGrid,
-    Column
-} from 'devextreme-react/data-grid';
-
-function FileExplorer() {
+function FileMap() {
     const {
         currentPath,
         loading,
         setCurrentPath,
-        listFiles
+        findDuplicates,
+        chooseFolder
     } = useFileSystem();
 
-    const [stack, setStack] = useState([]);
     const [files, setFiles] = useState([]);
 
-    async function getHomeDirectory() {
-        try {
-            const homeDir = await invoke("get_home_directory");
-            setCurrentPath(homeDir);
-        } catch (error) {
-            console.error("Failed to get home directory:", error);
-            // Fallback to root directory
-            setCurrentPath("/");
+    // Update local files when analysis is run
+    useEffect(() => {
+        if (files.length > 0) {
+            // Files are already set from the analysis
         }
-    }
+    }, [files]);
 
     async function fetchFiles() {
         try {
-            const fileList = await listFiles();
-            if (fileList) {
-                setFiles(fileList);
+            const duplicates = await findDuplicates();
+            if (duplicates) {
+                setFiles(duplicates);
             }
         } catch (error) {
             setFiles([]);
         }
     }
 
-    async function chooseFolder() {
-        try {
-            const selected = await open({
-                directory: true,
-                multiple: false,
-                defaultPath: currentPath
-            });
-            
-            if (selected && typeof selected === 'string') {
-                setStack([]); // Clear navigation stack when choosing new folder
-                setCurrentPath(selected);
-            }
-        } catch (error) {
-            console.error("Failed to open folder picker:", error);
-        }
-    }
-
-    // Initialize home directory if not set
-    useEffect(() => {
-        if (!currentPath) {
-            getHomeDirectory();
-        }
-    }, [currentPath]);
-
-    // Update files when path changes
-    useEffect(() => {
-        if (currentPath) {
-            fetchFiles();
-        }
-    }, [currentPath]);
-
     function handlePathChange(e) {
         const path = e.target.getAttribute("data-path")
-        stack.push(currentPath)
-        setCurrentPath(path);
+        // stack.push(currentPath)
+        // setCurrentPath(path);
     }
 
     function renderFileName(data) {
@@ -132,19 +104,12 @@ function FileExplorer() {
         </>;
     }
 
-    function navBack() {
-        console.log("Back Clicked")
-        if(stack.length <= 0) {
-            console.log("Stack length: 0")
-            return <a>Hello</a>
-        }
-        const prevPath = stack.pop();
-        console.log("Setting path:", prevPath)
-        setCurrentPath(prevPath);
-        console.log("Back Handled")
-    }
-    function renderBack() {
-        return <CButton onClick={navBack}>Back</CButton>
+    function renderFiles() {
+        const result = [];
+        (files || []).forEach(file => {
+            result.push(<p>{file}</p>)
+        })
+        return result;
     }
 
     return (<>
@@ -152,7 +117,7 @@ function FileExplorer() {
             <CCol xs={12}>
                 <CCard className="mb-4">
                     <CCardHeader>
-                        File Explorer
+                        Duplicate Files
                     </CCardHeader>
                     <CCardBody>
                         {/* Control Panel */}
@@ -187,39 +152,37 @@ function FileExplorer() {
                                     ) : files.length > 0 ? (
                                         <>
                                             <CIcon icon="cil-refresh" className="me-1" />
-                                            Refresh
+                                            Re-scan
                                         </>
                                     ) : (
                                         <>
-                                            <CIcon icon="cil-list" className="me-1" />
-                                            List Files
+                                            <CIcon icon="cil-copy" className="me-1" />
+                                            Find Duplicates
                                         </>
                                     )}
                                 </CButton>
-                                
-                                {renderBack()}
                             </div>
                             
                             {/* Status indicator */}
                             {currentPath && !loading && (
                                 <div className="small text-muted">
                                     <CIcon icon={files.length > 0 ? "cil-check-circle" : "cil-clock"} className={`me-1 ${files.length > 0 ? 'text-success' : 'text-warning'}`} />
-                                    {files.length > 0 ? `${files.length} items listed` : 'Ready to scan - click "List Files" to begin'}
+                                    {files.length > 0 ? `${files.length} duplicate groups found` : 'Ready to scan - click "Find Duplicates" to begin'}
                                 </div>
                             )}
-                            
-                            <div className="mt-1 text-muted small">Navigation stack: {JSON.stringify(stack)}</div>
                         </div>
                         <DataGrid id="dataGrid"
+                                  allowColumnResizing={true}
                                   dataSource={files}
                                   className="mt-3">
-                            <Column dataField="name" cellRender={renderFileName}/>
-                            <Column dataField="path" />
-                            <Column dataField="size" />
-                            <Column dataField="size_h" />
-                            <Column dataField="is_dir" />
-                            <Column dataField="is_file" />
+                            <Column dataField="disk_entry.name" cellRender={renderFileName}/>
+                            <Column dataField="disk_entry.path" />
+                            <Column dataField="disk_entry.size" />
+                            <Column dataField="disk_entry.size_h" />
+                            <Column dataField="disk_entry.is_dir" />
+                            <Column dataField="disk_entry.is_file" />
                         </DataGrid>
+
                     </CCardBody>
                 </CCard>
             </CCol>
@@ -227,4 +190,4 @@ function FileExplorer() {
     </>);
 }
 
-export default  FileExplorer;
+export default  FileMap;
