@@ -53,6 +53,15 @@ pub struct TreeBuildProgress {
     pub directories_processed: u64,
     pub total_size_bytes: u64,
     pub partial_tree: Option<TreeNode>, // Send partial tree data
+    pub errors: Vec<ScanError>, // List of errors encountered during scanning
+}
+
+// Error information for scan errors
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanError {
+    pub path: String,
+    pub error_message: String,
+    pub error_type: String, // "permission_denied", "not_found", "other"
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -412,12 +421,30 @@ impl TreeBuilderState {
             // Send progress update every 50 items processed
             if (self.files_processed + self.directories_processed) % 50 == 0 {
                 if let Some(ref tx) = progress_tx {
+                    let errors = self.tree_builder_errors.iter().map(|err_msg| {
+                        // Parse error message to extract path and error type
+                        let error_type = if err_msg.contains("Operation not permitted") || err_msg.contains("Permission denied") {
+                            "permission_denied".to_string()
+                        } else if err_msg.contains("No such file") {
+                            "not_found".to_string()
+                        } else {
+                            "other".to_string()
+                        };
+                        
+                        ScanError {
+                            path: name.to_string(),
+                            error_message: err_msg.clone(),
+                            error_type,
+                        }
+                    }).collect();
+
                     let _ = tx.try_send(TreeBuildProgress {
                         current_path: name.to_string(),
                         files_processed: self.files_processed,
                         directories_processed: self.directories_processed,
                         total_size_bytes: parent_node.disk_entry.size,
                         partial_tree: Some(parent_node.clone()),
+                        errors,
                     });
                 }
             }

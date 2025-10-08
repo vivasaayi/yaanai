@@ -22,6 +22,7 @@ export const FileSystemProvider = ({ children }) => {
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState(null);
     const [progressText, setProgressText] = useState("");
+    const [scanErrors, setScanErrors] = useState([]); // List of scan errors
 
     // Initialize home directory
     useEffect(() => {
@@ -42,7 +43,16 @@ export const FileSystemProvider = ({ children }) => {
         const unlisten = listen('tree-build-progress', (event) => {
             const progressData = event.payload;
             setProgress(progressData);
-            setProgressText(`Scanning: ${progressData.current_path} (${progressData.files_processed} files, ${progressData.directories_processed} dirs)`);
+            
+            // Update progress text with error count if errors exist
+            const errorCount = progressData.errors ? progressData.errors.length : 0;
+            const errorText = errorCount > 0 ? ` (${errorCount} errors)` : '';
+            setProgressText(`Scanning: ${progressData.current_path} (${progressData.files_processed} files, ${progressData.directories_processed} dirs)${errorText}`);
+
+            // Store errors
+            if (progressData.errors && progressData.errors.length > 0) {
+                setScanErrors(progressData.errors);
+            }
 
             // Show partial tree data for progressive visualization
             if (progressData.partial_tree) {
@@ -62,6 +72,7 @@ export const FileSystemProvider = ({ children }) => {
         setLoading(true);
         setProgress(null);
         setProgressText("Starting tree scan...");
+        setScanErrors([]); // Clear previous errors
 
         try {
             console.log("Fetching tree with progress for:", path);
@@ -70,17 +81,20 @@ export const FileSystemProvider = ({ children }) => {
 
             // Cache the tree data globally
             setTreeData(tree);
-            setProgressText("Scan complete! Select analysis type.");
+            const errorCount = scanErrors.length;
+            setProgressText(errorCount > 0 
+                ? `Scan complete with ${errorCount} errors. Check error list below.`
+                : "Scan complete! Select analysis type."
+            );
         } catch (error) {
             console.error("Failed to fetch tree:", error);
             setTreeData(null);
             setProgressText("Scan failed");
         } finally {
             setLoading(false);
-            // Clear progress after a short delay
+            // Don't clear progress/errors immediately - let user see the results
             setTimeout(() => {
                 setProgress(null);
-                setProgressText("");
             }, 2000);
         }
     };
@@ -163,6 +177,7 @@ export const FileSystemProvider = ({ children }) => {
         loading,
         progress,
         progressText,
+        scanErrors,
 
         // Actions
         setCurrentPath,
@@ -171,6 +186,7 @@ export const FileSystemProvider = ({ children }) => {
         findDuplicates,
         listFiles,
         chooseFolder,
+        setScanErrors,
     };
 
     return (
