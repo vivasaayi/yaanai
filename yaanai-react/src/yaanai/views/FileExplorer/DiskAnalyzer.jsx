@@ -122,8 +122,16 @@ function DiskAnalyzer() {
                     </CCardHeader>
                     <CCardBody>
                         <CButton onClick={chooseFolder} color="primary" className="me-2">Choose Folder</CButton>
-                        <CButton onClick={fetchFiles} className="me-2">Refresh</CButton>
-                        <div className="mt-2">{files.length} items analyzed in: {currentPath}</div>
+                        <CButton onClick={fetchFiles} className="me-2" disabled={loading}>
+                            {loading ? 'Analyzing Disk...' : 'Refresh'}
+                        </CButton>
+                        <div className="mt-2">
+                            {loading ? (
+                                <span>Analyzing disk usage for {currentPath}... <CIcon icon="cil-sync" className="spin" /></span>
+                            ) : (
+                                <span>{files.length} items analyzed in: {currentPath}</span>
+                            )}
+                        </div>
                         <DataGrid id="dataGrid"
                                   dataSource={files}
                                   className="mt-3">

@@ -1,5 +1,6 @@
 import {invoke} from "@tauri-apps/api/tauri";
 import {open} from "@tauri-apps/api/dialog";
+import {listen} from "@tauri-apps/api/event";
 import React, {useState, useEffect} from "react";
 import {
     CButton,
@@ -37,6 +38,8 @@ function TreeBuilder() {
     const [files, setFiles] = useState([]);
     const [currentPath, setCurrentPath] = useState("");
     const [loading, setLoading] = useState(true);
+    const [progress, setProgress] = useState(null);
+    const [progressText, setProgressText] = useState("");
 
     async function getHomeDirectory() {
         try {
@@ -69,6 +72,19 @@ function TreeBuilder() {
     }, []);
 
     useEffect(() => {
+        // Listen for tree build progress events
+        const unlisten = listen('tree-build-progress', (event) => {
+            const progressData = event.payload;
+            setProgress(progressData);
+            setProgressText(`Scanning: ${progressData.current_path} (${progressData.files_processed} files, ${progressData.directories_processed} dirs)`);
+        });
+
+        return () => {
+            unlisten.then(f => f());
+        };
+    }, []);
+
+    useEffect(() => {
         if (currentPath) {
             fetchFiles();
         }
@@ -78,16 +94,26 @@ function TreeBuilder() {
         if (!currentPath) return;
         
         setLoading(true);
+        setProgress(null);
+        setProgressText("Starting tree scan...");
+        
         try {
-            console.log("Fetching tree for:", currentPath);
-            const files = await invoke("get_file_tree", { folderName: currentPath });
+            console.log("Fetching tree with progress for:", currentPath);
+            const files = await invoke("get_file_tree_with_progress", { folderName: currentPath });
             console.log("Tree received:", files);
             setFiles(files);
+            setProgressText("Scan complete!");
         } catch (error) {
             console.error("Failed to fetch tree:", error);
             setFiles([]);
+            setProgressText("Scan failed");
         } finally {
             setLoading(false);
+            // Clear progress after a short delay
+            setTimeout(() => {
+                setProgress(null);
+                setProgressText("");
+            }, 2000);
         }
     }
 
@@ -129,8 +155,23 @@ function TreeBuilder() {
                     </CCardHeader>
                     <CCardBody>
                         <CButton onClick={chooseFolder} color="primary" className="me-2">Choose Folder</CButton>
-                        <CButton onClick={fetchFiles} className="me-2">Refresh</CButton>
-                        <div className="mt-2">{files.children ? files.children.length : 0} items in: {currentPath}</div>
+                        <CButton onClick={fetchFiles} className="me-2" disabled={loading}>
+                            {loading ? 'Building Tree...' : 'Refresh'}
+                        </CButton>
+                        <div className="mt-2">
+                            {loading ? (
+                                <div>
+                                    <span>Building tree for {currentPath}... <CIcon icon="cil-sync" className="spin" /></span>
+                                    {progressText && (
+                                        <div className="mt-1 text-muted small">
+                                            {progressText}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <span>{files.children ? files.children.length : 0} items in: {currentPath}</span>
+                            )}
+                        </div>
                         <TreeList
                             dataSource={files.children || []}
                             showBorders={true}

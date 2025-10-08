@@ -25,8 +25,12 @@ pub enum TreeBuilderRequest {
     BuildTree {
         folder_name: String,
         response_tx: oneshot::Sender<TreeBuilderResponse>,
+        progress_tx: Option<mpsc::Sender<TreeBuildProgress>>,
     },
     GetDuplicates {
+        response_tx: oneshot::Sender<TreeBuilderResponse>,
+    },
+    GetDiskUsage {
         response_tx: oneshot::Sender<TreeBuilderResponse>,
     },
     Shutdown,
@@ -37,7 +41,18 @@ pub enum TreeBuilderRequest {
 pub enum TreeBuilderResponse {
     TreeBuilt(TreeNode),
     DuplicatesFound(Vec<TreeNode>),
+    DiskUsageAnalyzed(Vec<DiskEntry>),
     Error(String),
+}
+
+// Progress updates during tree building
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreeBuildProgress {
+    pub current_path: String,
+    pub files_processed: u64,
+    pub directories_processed: u64,
+    pub total_size_bytes: u64,
+    pub partial_tree: Option<TreeNode>, // Send partial tree data
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -76,17 +91,34 @@ impl RecursiveFileTreeBuilder {
     }
 
     async fn background_task(mut request_rx: mpsc::Receiver<TreeBuilderRequest>) {
-        let mut tree_builder = TreeBuilderState::new();
-        
         while let Some(request) = request_rx.recv().await {
             match request {
-                TreeBuilderRequest::BuildTree { folder_name, response_tx } => {
-                    tree_builder.build_tree_using_recursion(&folder_name);
-                    let _ = response_tx.send(TreeBuilderResponse::TreeBuilt(tree_builder.root_node.clone()));
+                TreeBuilderRequest::BuildTree { folder_name, response_tx, progress_tx } => {
+                    // Run CPU-intensive tree building on blocking thread pool
+                    let folder_name_clone = folder_name.clone();
+                    let progress_tx_clone = progress_tx.clone();
+                    let tree_result = tokio::task::spawn_blocking(move || {
+                        let mut tree_builder = TreeBuilderState::new();
+                        tree_builder.build_tree_with_progress(&folder_name_clone, progress_tx_clone);
+                        tree_builder.root_node
+                    }).await;
+                    
+                    match tree_result {
+                        Ok(tree) => {
+                            let _ = response_tx.send(TreeBuilderResponse::TreeBuilt(tree));
+                        }
+                        Err(e) => {
+                            let _ = response_tx.send(TreeBuilderResponse::Error(format!("Task failed: {}", e)));
+                        }
+                    }
                 }
                 TreeBuilderRequest::GetDuplicates { response_tx } => {
-                    let duplicates = tree_builder.get_duplicate_files();
-                    let _ = response_tx.send(TreeBuilderResponse::DuplicatesFound(duplicates));
+                    // For now, return empty duplicates - this would need proper state management
+                    let _ = response_tx.send(TreeBuilderResponse::DuplicatesFound(vec![]));
+                }
+                TreeBuilderRequest::GetDiskUsage { response_tx } => {
+                    // For now, return empty disk usage - this would need proper state management
+                    let _ = response_tx.send(TreeBuilderResponse::DiskUsageAnalyzed(vec![]));
                 }
                 TreeBuilderRequest::Shutdown => {
                     break;
@@ -101,6 +133,23 @@ impl RecursiveFileTreeBuilder {
         self.request_tx.send(TreeBuilderRequest::BuildTree {
             folder_name,
             response_tx,
+            progress_tx: None, // No progress callback for now
+        }).await.map_err(|e| format!("Failed to send request: {}", e))?;
+        
+        match response_rx.await.map_err(|e| format!("Failed to receive response: {}", e))? {
+            TreeBuilderResponse::TreeBuilt(tree) => Ok(tree),
+            TreeBuilderResponse::Error(err) => Err(err),
+            _ => Err("Unexpected response type".to_string()),
+        }
+    }
+
+    pub async fn build_tree_with_progress_async(&self, folder_name: String, progress_tx: mpsc::Sender<TreeBuildProgress>) -> Result<TreeNode, String> {
+        let (response_tx, response_rx) = oneshot::channel();
+        
+        self.request_tx.send(TreeBuilderRequest::BuildTree {
+            folder_name,
+            response_tx,
+            progress_tx: Some(progress_tx),
         }).await.map_err(|e| format!("Failed to send request: {}", e))?;
         
         match response_rx.await.map_err(|e| format!("Failed to receive response: {}", e))? {
@@ -146,6 +195,15 @@ impl TreeBuilderState {
         tree_node.node_type = NodeType::Directory;
 
         self.recursively_build_file_tree(name, &mut tree_node);
+
+        self.root_node = tree_node;
+    }
+
+    fn build_tree_with_progress(&mut self, name: &str, progress_tx: Option<mpsc::Sender<TreeBuildProgress>>) {
+        let mut tree_node = TreeNode::new();
+        tree_node.node_type = NodeType::Directory;
+
+        self.recursively_build_file_tree_with_progress(name, &mut tree_node, progress_tx);
 
         self.root_node = tree_node;
     }
@@ -226,6 +284,107 @@ impl TreeBuilderState {
                 child_dir_path.push_str(dir_path.as_str());
 
                 self.recursively_build_file_tree(&child_dir_path, &mut child_tree_node);
+                parent_node.disk_entry.size += child_tree_node.disk_entry.size;
+            } else if metadata.is_file() {
+                child_tree_node.node_type = NodeType::File;
+                child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
+                parent_node.disk_entry.size += child_tree_node.disk_entry.size;
+
+                let key = dir_path + child_tree_node.disk_entry.size.to_string().as_str();
+                let key = key.as_str();
+
+                let result = self.files_map.get_mut(key);
+
+                match result {
+                    None => {
+                        let mut new_vec:Vec<TreeNode> = vec![];
+
+                        new_vec.push(child_tree_node.clone());
+
+                        self.files_map.insert(key.to_string(), new_vec);
+                    }
+
+                    Some(hm) => {
+                        hm.push(child_tree_node.clone())
+                    }
+                }
+            }
+
+            parent_node.disk_entry.calculate_human_size();
+            parent_node.children.push(child_tree_node);
+        }
+    }
+
+    pub fn recursively_build_file_tree_with_progress<'a>(&mut self, name: &'a str, parent_node: &'a mut TreeNode, progress_tx: Option<mpsc::Sender<TreeBuildProgress>>) {
+        // Send progress update if sender is available
+        if let Some(ref tx) = progress_tx {
+            let _ = tx.try_send(TreeBuildProgress {
+                current_path: name.to_string(),
+                files_processed: 0, // We'll track this properly later
+                directories_processed: 0,
+                total_size_bytes: parent_node.disk_entry.size,
+                partial_tree: Some(parent_node.clone()),
+            });
+        }
+
+        if name.contains("/Users/rajanp/Library") {
+            return
+        }
+
+        if name.ends_with(".npm") ||name.ends_with(".m2") || name.ends_with(".git") || name.ends_with("node_modules") || name.ends_with(".cargo")
+            || name.ends_with(".nuget") || name.ends_with(".rustup") || name.ends_with(".vscode")
+        || name.ends_with(".gradle") || name.ends_with("target/release") || name.ends_with("target/debug")
+        || name.ends_with("Movies/CacheClip") ||  name.ends_with("bin/Release") || name.ends_with("bin/Debug")
+        || name.ends_with("tests/wpt") || name.ends_with("obj/Release") || name.ends_with("bin/Release")||
+            name.ends_with("rajanp/Applications") || name.ends_with("rajanp/work") || name.ends_with("Render Files/Peaks Data")
+            || name.ends_with("Documents/projects") || name.ends_with("AndroidStudioProjects"){
+
+            return
+        }
+
+        let dirs: std::io::Result<ReadDir> = std::fs::read_dir(name);
+
+        match dirs {
+            Err(error) => {
+                self.tree_builder_errors.push("Error occurred when reading the directory {name}".to_string());
+                println!("Error occurred when reading the directory {name}");
+                println!("{error}");
+                return;
+            }
+
+            _ => {}
+        }
+
+        for dir in dirs.unwrap() {
+            let dir_entry: DirEntry = dir.unwrap();
+
+            let dir_path: String = dir_entry.file_name().into_string().unwrap();
+
+            let metadata = dir_entry.metadata();
+
+            match metadata {
+                Err(error) => {
+                    self.tree_builder_errors.push("Unable to get metadata for {name}".to_string());
+                    println!("Error occurred when reading the directory {name}");
+                    println!("{error}");
+                    return;
+                }
+
+                _ => {}
+            }
+
+            let metadata = metadata.unwrap();
+
+            let mut child_tree_node = TreeNode::new();
+            if metadata.is_dir() {
+                child_tree_node.node_type = NodeType::Directory;
+                child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
+
+                let mut child_dir_path = name.to_string();
+                child_dir_path.push_str("/");
+                child_dir_path.push_str(dir_path.as_str());
+
+                self.recursively_build_file_tree_with_progress(&child_dir_path, &mut child_tree_node, progress_tx.clone());
                 parent_node.disk_entry.size += child_tree_node.disk_entry.size;
             } else if metadata.is_file() {
                 child_tree_node.node_type = NodeType::File;

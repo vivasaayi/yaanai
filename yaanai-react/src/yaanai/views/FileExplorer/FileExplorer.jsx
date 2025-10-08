@@ -50,7 +50,7 @@ function FileExplorer() {
         try {
             console.log("Fetching files for:", currentPath);
             const files = await invoke("recursively_list_files", { folderName: currentPath });
-            console.log("Files received:", files);
+            console.log("Files received:", files.length, "items");
             setFiles(files);
         } catch (error) {
             console.error("Failed to fetch files:", error);
@@ -132,9 +132,17 @@ function FileExplorer() {
                     </CCardHeader>
                     <CCardBody>
                         <CButton onClick={chooseFolder} color="primary" className="me-2">Choose Folder</CButton>
-                        <CButton onClick={fetchFiles} className="me-2">Refresh</CButton>
+                        <CButton onClick={fetchFiles} className="me-2" disabled={loading}>
+                            {loading ? 'Loading...' : 'Refresh'}
+                        </CButton>
                         {renderBack()}
-                        <div className="mt-2">{files.length} items in: {currentPath}</div>
+                        <div className="mt-2">
+                            {loading ? (
+                                <span>Analyzing {currentPath}... <CIcon icon="cil-sync" className="spin" /></span>
+                            ) : (
+                                <span>{files.length} items in: {currentPath}</span>
+                            )}
+                        </div>
                         <div className="mt-1 text-muted small">Navigation stack: {JSON.stringify(stack)}</div>
                         <DataGrid id="dataGrid"
                                   dataSource={files}

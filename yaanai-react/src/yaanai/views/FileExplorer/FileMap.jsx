@@ -129,8 +129,16 @@ function FileMap() {
                     </CCardHeader>
                     <CCardBody>
                         <CButton onClick={chooseFolder} color="primary" className="me-2">Choose Folder</CButton>
-                        <CButton onClick={fetchFiles} className="me-2">Refresh</CButton>
-                        <div className="mt-2">{files.length} duplicate groups found in: {currentPath}</div>
+                        <CButton onClick={fetchFiles} className="me-2" disabled={loading}>
+                            {loading ? 'Finding Duplicates...' : 'Refresh'}
+                        </CButton>
+                        <div className="mt-2">
+                            {loading ? (
+                                <span>Scanning {currentPath} for duplicates... <CIcon icon="cil-sync" className="spin" /></span>
+                            ) : (
+                                <span>{files.length} duplicate groups found in: {currentPath}</span>
+                            )}
+                        </div>
                         <DataGrid id="dataGrid"
                                   allowColumnResizing={true}
                                   dataSource={files}
