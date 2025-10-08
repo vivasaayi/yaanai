@@ -179,6 +179,8 @@ struct TreeBuilderState {
     pub root_node: TreeNode,
     pub tree_builder_errors: Vec<String>,
     pub files_map: HashMap<String, Vec<TreeNode>>,
+    pub files_processed: u64,
+    pub directories_processed: u64,
 }
 
 impl TreeBuilderState {
@@ -187,6 +189,8 @@ impl TreeBuilderState {
             root_node: TreeNode::new(),
             tree_builder_errors: vec![],
             files_map: HashMap::new(),
+            files_processed: 0,
+            directories_processed: 0,
         }
     }
 
@@ -316,17 +320,6 @@ impl TreeBuilderState {
     }
 
     pub fn recursively_build_file_tree_with_progress<'a>(&mut self, name: &'a str, parent_node: &'a mut TreeNode, progress_tx: Option<mpsc::Sender<TreeBuildProgress>>) {
-        // Send progress update if sender is available
-        if let Some(ref tx) = progress_tx {
-            let _ = tx.try_send(TreeBuildProgress {
-                current_path: name.to_string(),
-                files_processed: 0, // We'll track this properly later
-                directories_processed: 0,
-                total_size_bytes: parent_node.disk_entry.size,
-                partial_tree: Some(parent_node.clone()),
-            });
-        }
-
         if name.contains("/Users/rajanp/Library") {
             return
         }
@@ -377,6 +370,7 @@ impl TreeBuilderState {
 
             let mut child_tree_node = TreeNode::new();
             if metadata.is_dir() {
+                self.directories_processed += 1;
                 child_tree_node.node_type = NodeType::Directory;
                 child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
 
@@ -387,6 +381,7 @@ impl TreeBuilderState {
                 self.recursively_build_file_tree_with_progress(&child_dir_path, &mut child_tree_node, progress_tx.clone());
                 parent_node.disk_entry.size += child_tree_node.disk_entry.size;
             } else if metadata.is_file() {
+                self.files_processed += 1;
                 child_tree_node.node_type = NodeType::File;
                 child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
                 parent_node.disk_entry.size += child_tree_node.disk_entry.size;
@@ -413,6 +408,19 @@ impl TreeBuilderState {
 
             parent_node.disk_entry.calculate_human_size();
             parent_node.children.push(child_tree_node);
+
+            // Send progress update every 50 items processed
+            if (self.files_processed + self.directories_processed) % 50 == 0 {
+                if let Some(ref tx) = progress_tx {
+                    let _ = tx.try_send(TreeBuildProgress {
+                        current_path: name.to_string(),
+                        files_processed: self.files_processed,
+                        directories_processed: self.directories_processed,
+                        total_size_bytes: parent_node.disk_entry.size,
+                        partial_tree: Some(parent_node.clone()),
+                    });
+                }
+            }
         }
     }
 }

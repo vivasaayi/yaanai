@@ -1,6 +1,7 @@
 import {invoke} from "@tauri-apps/api/tauri";
 import {open} from "@tauri-apps/api/dialog";
 import React, {useState, useEffect} from "react";
+import { useFileSystem } from './FileSystemContext';
 import {
     CButton,
     CCard,
@@ -21,16 +22,41 @@ import ReactImg from "../../../assets/images/react.jpg";
 
 import 'devextreme/dist/css/dx.light.css';
 
+// Add custom styles for animations
+const styles = `
+    .spin {
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+`;
+
+// Inject styles
+if (typeof document !== 'undefined') {
+    const styleSheet = document.createElement("style");
+    styleSheet.type = "text/css";
+    styleSheet.innerText = styles;
+    document.head.appendChild(styleSheet);
+}
+
 import {
     DataGrid,
     Column
 } from 'devextreme-react/data-grid';
 
 function FileExplorer() {
+    const {
+        currentPath,
+        loading,
+        setCurrentPath,
+        listFiles
+    } = useFileSystem();
+
     const [stack, setStack] = useState([]);
-    const [currentPath, setCurrentPath] = useState("");
     const [files, setFiles] = useState([]);
-    const [loading, setLoading] = useState(true);
 
     async function getHomeDirectory() {
         try {
@@ -44,19 +70,13 @@ function FileExplorer() {
     }
 
     async function fetchFiles() {
-        if (!currentPath) return;
-        
-        setLoading(true);
         try {
-            console.log("Fetching files for:", currentPath);
-            const files = await invoke("recursively_list_files", { folderName: currentPath });
-            console.log("Files received:", files.length, "items");
-            setFiles(files);
+            const fileList = await listFiles();
+            if (fileList) {
+                setFiles(fileList);
+            }
         } catch (error) {
-            console.error("Failed to fetch files:", error);
             setFiles([]);
-        } finally {
-            setLoading(false);
         }
     }
 
@@ -77,10 +97,14 @@ function FileExplorer() {
         }
     }
 
+    // Initialize home directory if not set
     useEffect(() => {
-        getHomeDirectory();
-    }, []);
+        if (!currentPath) {
+            getHomeDirectory();
+        }
+    }, [currentPath]);
 
+    // Update files when path changes
     useEffect(() => {
         if (currentPath) {
             fetchFiles();
@@ -131,19 +155,61 @@ function FileExplorer() {
                         File Explorer
                     </CCardHeader>
                     <CCardBody>
-                        <CButton onClick={chooseFolder} color="primary" className="me-2">Choose Folder</CButton>
-                        <CButton onClick={fetchFiles} className="me-2" disabled={loading}>
-                            {loading ? 'Loading...' : 'Refresh'}
-                        </CButton>
-                        {renderBack()}
-                        <div className="mt-2">
-                            {loading ? (
-                                <span>Analyzing {currentPath}... <CIcon icon="cil-sync" className="spin" /></span>
-                            ) : (
-                                <span>{files.length} items in: {currentPath}</span>
+                        {/* Control Panel */}
+                        <div className="mb-3">
+                            <div className="d-flex gap-2 align-items-center mb-2">
+                                <CButton onClick={chooseFolder} color="secondary" size="sm">
+                                    <CIcon icon="cil-folder" className="me-1" />Choose Folder
+                                </CButton>
+                                
+                                <div className="flex-grow-1">
+                                    <input
+                                        type="text"
+                                        className="form-control form-control-sm"
+                                        value={currentPath}
+                                        onChange={(e) => setCurrentPath(e.target.value)}
+                                        placeholder="Enter folder path..."
+                                        disabled={loading}
+                                    />
+                                </div>
+                                
+                                <CButton 
+                                    onClick={fetchFiles} 
+                                    color={files.length > 0 ? "success" : "primary"}
+                                    disabled={loading || !currentPath}
+                                    size="sm"
+                                >
+                                    {loading ? (
+                                        <>
+                                            <CIcon icon="cil-sync" className="spin me-1" />
+                                            Scanning...
+                                        </>
+                                    ) : files.length > 0 ? (
+                                        <>
+                                            <CIcon icon="cil-refresh" className="me-1" />
+                                            Refresh
+                                        </>
+                                    ) : (
+                                        <>
+                                            <CIcon icon="cil-list" className="me-1" />
+                                            List Files
+                                        </>
+                                    )}
+                                </CButton>
+                                
+                                {renderBack()}
+                            </div>
+                            
+                            {/* Status indicator */}
+                            {currentPath && !loading && (
+                                <div className="small text-muted">
+                                    <CIcon icon={files.length > 0 ? "cil-check-circle" : "cil-clock"} className={`me-1 ${files.length > 0 ? 'text-success' : 'text-warning'}`} />
+                                    {files.length > 0 ? `${files.length} items listed` : 'Ready to scan - click "List Files" to begin'}
+                                </div>
                             )}
+                            
+                            <div className="mt-1 text-muted small">Navigation stack: {JSON.stringify(stack)}</div>
                         </div>
-                        <div className="mt-1 text-muted small">Navigation stack: {JSON.stringify(stack)}</div>
                         <DataGrid id="dataGrid"
                                   dataSource={files}
                                   className="mt-3">

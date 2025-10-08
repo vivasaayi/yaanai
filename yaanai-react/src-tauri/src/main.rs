@@ -25,9 +25,8 @@ fn recursively_list_files(folder_name: &str) -> Vec<DiskEntry> {
 }
 
 #[tauri::command]
-fn analyze_disk_usage(folder_name: &str) -> Vec<DiskEntry> {
-    let result = yaanaiapp::analyze_disk_usage(folder_name.to_string());
-    result
+async fn analyze_disk_usage(folder_name: &str, state: tauri::State<'_, FileManagerState>) -> Result<Vec<DiskEntry>, String> {
+    state.file_manager.analyze_disk_usage_async(folder_name.to_string()).await
 }
 
 #[tauri::command]
