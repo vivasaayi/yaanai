@@ -1,5 +1,5 @@
 import {invoke} from "@tauri-apps/api/core";
-import {open} from "@tauri-apps/api/dialog";
+import {open} from "@tauri-apps/plugin-dialog";
 import React, {useState, useEffect} from "react";
 import { useFileSystem } from './FileSystemContext';
 import {
