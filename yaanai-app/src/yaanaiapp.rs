@@ -2,6 +2,12 @@ mod tests;
 pub mod types;
 pub mod recursive_tree_builder;
 pub mod file_manager;
+pub mod db;
+pub mod duplicate_detector;
+pub mod searcher;
+pub mod file_operations;
+pub mod exporter;
+pub mod ignore_matcher;
 
 
 use std::io::Error;
