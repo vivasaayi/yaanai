@@ -1,13 +1,24 @@
-# Launching the app
+# YAANAI - Desktop File Analyzer
 
-I am testing two differnt options.
+A modern desktop application for analyzing file systems, detecting duplicate files, and managing disk space.
 
-1. Everything Rust (WASM + NATIVE UI): Using Native UI development using egui/eframe, which leverages WebGL. It uses immediete UI mode, so UI changes are written directly to the display device. It provides support for native UI, and also have the capability to run the code as WASM.
-2. REACT FrontEnd + Rust Backend (Only Native Apps): Using Tauri, which uses react front end, and Rust as the back end. Provides more flexibility in UI development.
+## Architecture
 
-Please refer to the respective project folders for more details.
+Built with **Tauri** - React frontend + Rust backend for native desktop performance and web UI flexibility.
 
-Also check out the docs folder, which has detailed info about the two UIs.
+**Key Features:**
+- Recursive file tree analysis with progress tracking
+- Real-time disk usage visualization (treemaps, sunbursts, charts)
+- True duplicate detection using content hashing (SHA256)
+- Smart file search with pattern matching
+- Safe file operations with trash/recycle bin support
+- Exportable reports (CSV, JSON)
+- Persistent caching with SQLite
+
+For setup and development details, refer to the respective project folders:
+- `/yaanai-app` - Rust backend library
+- `/yaanai-react` - React frontend with Tauri integration
+- `/docs` - Architecture and development documentation
 
 
 # License

@@ -5,7 +5,7 @@
 
 
 
-// Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
+// Learn more about Tauri commands at https://tauri.app/v2/guides/features/command
 #[tauri::command]
 fn welcome(name: &str, state: tauri::State<FileManagerState>) -> String {
     let _ = &state.file_manager.get_stats();
@@ -89,16 +89,21 @@ impl FileManagerState {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let mut file_manager_state = FileManagerState::new();
     file_manager_state.init();
 
     tauri::Builder::default()
         .manage(file_manager_state)
-        .invoke_handler(tauri::generate_handler![welcome,
-            recursively_list_files, analyze_disk_usage,
-            get_file_tree, get_file_tree_with_progress, get_files_map, get_home_directory])
+        .invoke_handler(tauri::generate_handler![
+            welcome,
+            recursively_list_files,
+            analyze_disk_usage,
+            get_file_tree,
+            get_file_tree_with_progress,
+            get_files_map,
+            get_home_directory
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

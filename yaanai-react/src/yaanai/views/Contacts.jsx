@@ -7,7 +7,7 @@ import {
   CRow,
 } from '@coreui/react'
 
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 
 const Contacts = () => {
   const [name, setName] = useState();

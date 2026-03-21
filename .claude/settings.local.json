@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(for file:*)",
+      "Bash(do)",
+      "Bash(sed -i '' 's|from \"\"@tauri-apps/api/tauri\"\"|from \"\"@tauri-apps/api/core\"\"|g' \"$file\")",
+      "Bash(echo \"✅ Updated $file\")",
+      "Bash(done)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

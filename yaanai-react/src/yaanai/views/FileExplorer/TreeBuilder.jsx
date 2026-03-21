@@ -1,4 +1,4 @@
-import {invoke} from "@tauri-apps/api/tauri";
+import {invoke} from "@tauri-apps/api/core";
 import {open} from "@tauri-apps/api/dialog";
 import {listen} from "@tauri-apps/api/event";
 import React, {useState, useEffect, createContext, useContext} from "react";
