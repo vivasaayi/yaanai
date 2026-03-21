@@ -35,21 +35,16 @@ async fn get_file_tree(folder_name: &str, state: tauri::State<'_, FileManagerSta
 }
 
 #[tauri::command]
-async fn get_file_tree_with_progress(folder_name: &str, window: tauri::Window, state: tauri::State<'_, FileManagerState>) -> Result<yaanaiapp::recursive_tree_builder::TreeNode, String> {
+async fn get_file_tree_with_progress(folder_name: &str, _window: tauri::Window, state: tauri::State<'_, FileManagerState>) -> Result<yaanaiapp::recursive_tree_builder::TreeNode, String> {
     // Create a progress channel
-    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(100);
-    
-    // Spawn a task to handle progress updates
-    let window_clone = window.clone();
-    tokio::spawn(async move {
-        while let Some(progress) = progress_rx.recv().await {
-            // Emit progress event to frontend
-            let _ = window_clone.emit("tree-build-progress", progress);
-        }
-    });
-    
-    // Build tree with progress
-    state.file_manager.get_file_tree_with_progress_async(folder_name.to_string(), progress_tx).await
+    let (_progress_tx, _progress_rx) = tokio::sync::mpsc::channel::<yaanaiapp::recursive_tree_builder::TreeBuildProgress>(100);
+
+    // TODO: In Tauri 2.x, window events need to be refactored to use a different pattern
+    // For now, we'll build the tree without progress updates
+    // The frontend will be updated to handle this appropriately
+
+    // Build tree without progress events (temporary solution)
+    state.file_manager.get_file_tree_async(folder_name.to_string()).await
 }
 
 #[tauri::command]

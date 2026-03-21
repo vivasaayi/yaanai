@@ -5,10 +5,6 @@
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "yaanai-react",
-    "version": "0.0.0"
-  },
   "app": {
     "windows": [
       {
@@ -23,12 +19,7 @@
   },
   "bundle": {
     "active": true,
-    "category": "DeveloperTool",
-    "copyright": "",
-    "deb": {
-      "depends": []
-    },
-    "externalBin": [],
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,22 +27,23 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "identifier": "com.yaanai.filemanager",
-    "longDescription": "",
-    "macOS": {
-      "entitlements": null,
-      "exceptionDomain": "",
-      "frameworks": [],
-      "providerShortName": null,
-      "signingIdentity": null
-    },
     "resources": [],
-    "shortDescription": "",
-    "targets": "all",
+    "copyright": "",
+    "category": "DeveloperTool",
+    "shortDescription": "YAANAI - Desktop File Analyzer",
+    "longDescription": "A modern desktop application for analyzing file systems, detecting duplicates, and managing disk space.",
+    "externalBin": [],
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
       "timestampUrl": ""
+    },
+    "macOS": {
+      "entitlements": null,
+      "frameworks": []
     }
-  }
+  },
+  "productName": "yaanai",
+  "identifier": "com.yaanai.filemanager",
+  "version": "0.0.0"
 }
