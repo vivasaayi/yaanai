@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 // Create the context
 const FileSystemContext = createContext();
@@ -18,15 +19,19 @@ export const useFileSystem = () => {
 export const FileSystemProvider = ({ children }) => {
     // Shared state across all file system components
     const [currentPath, setCurrentPath] = useState("");
-    const [treeData, setTreeData] = useState(null); // Shared tree data
+    const [treeData, setTreeData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [progress, setProgress] = useState(null);
     const [progressText, setProgressText] = useState("");
-    const [scanErrors, setScanErrors] = useState([]); // List of scan errors
+    const [scanErrors, setScanErrors] = useState([]);
 
-    // Initialize home directory
+    // Favorites & ignore patterns
+    const [favorites, setFavorites] = useState([]);
+    const [ignorePatterns, setIgnorePatterns] = useState([]);
+
+    // Initialize home directory and load persisted data
     useEffect(() => {
-        const getHomeDirectory = async () => {
+        const init = async () => {
             try {
                 const homeDir = await invoke("get_home_directory");
                 setCurrentPath(homeDir);
@@ -34,8 +39,22 @@ export const FileSystemProvider = ({ children }) => {
                 console.error("Failed to get home directory:", error);
                 setCurrentPath("/");
             }
+
+            // Load favorites and ignore patterns from DB
+            try {
+                const favs = await invoke("get_favorites");
+                setFavorites(favs);
+            } catch (e) {
+                console.error("Failed to load favorites:", e);
+            }
+            try {
+                const patterns = await invoke("get_ignore_patterns");
+                setIgnorePatterns(patterns);
+            } catch (e) {
+                console.error("Failed to load ignore patterns:", e);
+            }
         };
-        getHomeDirectory();
+        init();
     }, []);
 
     // Listen for tree build progress events
@@ -43,18 +62,15 @@ export const FileSystemProvider = ({ children }) => {
         const unlisten = listen('tree-build-progress', (event) => {
             const progressData = event.payload;
             setProgress(progressData);
-            
-            // Update progress text with error count if errors exist
+
             const errorCount = progressData.errors ? progressData.errors.length : 0;
             const errorText = errorCount > 0 ? ` (${errorCount} errors)` : '';
             setProgressText(`Scanning: ${progressData.current_path} (${progressData.files_processed} files, ${progressData.directories_processed} dirs)${errorText}`);
 
-            // Store errors
             if (progressData.errors && progressData.errors.length > 0) {
                 setScanErrors(progressData.errors);
             }
 
-            // Show partial tree data for progressive visualization
             if (progressData.partial_tree) {
                 setTreeData(progressData.partial_tree);
             }
@@ -65,24 +81,19 @@ export const FileSystemProvider = ({ children }) => {
         };
     }, []);
 
-    // Shared scan function
+    // --- Tree / Disk Usage ---
+
     const scanDirectory = async (path) => {
         if (!path) return;
-
         setLoading(true);
         setProgress(null);
         setProgressText("Starting tree scan...");
-        setScanErrors([]); // Clear previous errors
-
+        setScanErrors([]);
         try {
-            console.log("Fetching tree with progress for:", path);
             const tree = await invoke("get_file_tree_with_progress", { folderName: path });
-            console.log("Tree received:", tree);
-
-            // Cache the tree data globally
             setTreeData(tree);
             const errorCount = scanErrors.length;
-            setProgressText(errorCount > 0 
+            setProgressText(errorCount > 0
                 ? `Scan complete with ${errorCount} errors. Check error list below.`
                 : "Scan complete! Select analysis type."
             );
@@ -92,44 +103,21 @@ export const FileSystemProvider = ({ children }) => {
             setProgressText("Scan failed");
         } finally {
             setLoading(false);
-            // Don't clear progress/errors immediately - let user see the results
-            setTimeout(() => {
-                setProgress(null);
-            }, 2000);
+            setTimeout(() => setProgress(null), 2000);
         }
     };
 
-    // Shared analysis functions that use the cached tree
     const analyzeDiskUsage = async () => {
         if (!treeData) {
             await scanDirectory(currentPath);
             return;
         }
-
         setLoading(true);
         try {
             const diskUsage = await invoke("analyze_disk_usage", { folderName: currentPath });
             return diskUsage;
         } catch (error) {
             console.error("Disk analysis failed:", error);
-            throw error;
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const findDuplicates = async () => {
-        if (!treeData) {
-            await scanDirectory(currentPath);
-            return;
-        }
-
-        setLoading(true);
-        try {
-            const duplicates = await invoke("get_files_map", { folderName: currentPath });
-            return duplicates;
-        } catch (error) {
-            console.error("Duplicate analysis failed:", error);
             throw error;
         } finally {
             setLoading(false);
@@ -149,21 +137,151 @@ export const FileSystemProvider = ({ children }) => {
         }
     };
 
-    // Choose folder function
+    // --- True Duplicate Detection (SHA256) ---
+
+    const findTrueDuplicates = async (folderPath) => {
+        const folder = folderPath || currentPath;
+        setLoading(true);
+        setProgressText("Finding duplicates (hashing files)...");
+        try {
+            const result = await invoke("find_true_duplicates", { folderName: folder });
+            setProgressText(`Found ${result.total_duplicates} duplicates wasting ${result.total_wasted_space_h}`);
+            return result;
+        } catch (error) {
+            console.error("Duplicate detection failed:", error);
+            setProgressText("Duplicate scan failed");
+            throw error;
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- File Search ---
+
+    const searchFiles = async (pattern, options = {}) => {
+        setLoading(true);
+        setProgressText(`Searching for "${pattern}"...`);
+        try {
+            const result = await invoke("search_files", {
+                folderName: currentPath,
+                pattern,
+                recursive: options.recursive !== undefined ? options.recursive : true,
+                extensions: options.extensions || null,
+                minSize: options.minSize || null,
+                maxSize: options.maxSize || null,
+            });
+            setProgressText(`Found ${result.total_matches} matches in ${result.files_searched} files`);
+            return result;
+        } catch (error) {
+            console.error("Search failed:", error);
+            setProgressText("Search failed");
+            throw error;
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- File Operations ---
+
+    const deleteFiles = async (paths, useTrash = true) => {
+        setLoading(true);
+        setProgressText(`Deleting ${paths.length} file(s)...`);
+        try {
+            const result = await invoke("delete_files", { paths, useTrash });
+            setProgressText(
+                `Deleted ${result.deleted.length} file(s), freed ${result.total_size_freed_h}` +
+                (result.failed.length > 0 ? ` (${result.failed.length} failed)` : '')
+            );
+            return result;
+        } catch (error) {
+            console.error("Delete failed:", error);
+            setProgressText("Delete failed");
+            throw error;
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- Export ---
+
+    const exportReport = async (format, reportType, filePath, folderName) => {
+        setLoading(true);
+        setProgressText(`Exporting ${reportType} as ${format}...`);
+        try {
+            const resultPath = await invoke("export_report", {
+                format,
+                reportType,
+                filePath,
+                folderName: folderName || currentPath,
+            });
+            setProgressText(`Exported to ${resultPath}`);
+            return resultPath;
+        } catch (error) {
+            console.error("Export failed:", error);
+            setProgressText("Export failed");
+            throw error;
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- Favorites ---
+
+    const addFavorite = async (path, name) => {
+        try {
+            const fav = await invoke("add_favorite", { path, name });
+            setFavorites(prev => [...prev, fav]);
+            return fav;
+        } catch (error) {
+            console.error("Failed to add favorite:", error);
+            throw error;
+        }
+    };
+
+    const removeFavorite = async (path) => {
+        try {
+            await invoke("remove_favorite", { path });
+            setFavorites(prev => prev.filter(f => f.path !== path));
+        } catch (error) {
+            console.error("Failed to remove favorite:", error);
+            throw error;
+        }
+    };
+
+    // --- Ignore Patterns ---
+
+    const addIgnorePattern = async (pattern) => {
+        try {
+            const pat = await invoke("add_ignore_pattern", { pattern });
+            setIgnorePatterns(prev => [...prev, pat]);
+            return pat;
+        } catch (error) {
+            console.error("Failed to add ignore pattern:", error);
+            throw error;
+        }
+    };
+
+    const removeIgnorePattern = async (pattern) => {
+        try {
+            await invoke("remove_ignore_pattern", { pattern });
+            setIgnorePatterns(prev => prev.filter(p => p.pattern !== pattern));
+        } catch (error) {
+            console.error("Failed to remove ignore pattern:", error);
+            throw error;
+        }
+    };
+
+    // --- Choose Folder ---
+
     const chooseFolder = async () => {
         try {
-            console.log("Opening folder picker...");
-            const selected = await open({
+            const selected = await openDialog({
                 directory: true,
                 multiple: false,
                 defaultPath: currentPath || undefined,
             });
-            console.log("Folder picker result:", selected);
             if (selected) {
                 setCurrentPath(selected);
-                console.log("Set current path to:", selected);
-            } else {
-                console.log("No folder selected");
             }
         } catch (error) {
             console.error("Failed to open folder picker:", error);
@@ -178,13 +296,22 @@ export const FileSystemProvider = ({ children }) => {
         progress,
         progressText,
         scanErrors,
+        favorites,
+        ignorePatterns,
 
         // Actions
         setCurrentPath,
         scanDirectory,
         analyzeDiskUsage,
-        findDuplicates,
         listFiles,
+        findTrueDuplicates,
+        searchFiles,
+        deleteFiles,
+        exportReport,
+        addFavorite,
+        removeFavorite,
+        addIgnorePattern,
+        removeIgnorePattern,
         chooseFolder,
         setScanErrors,
     };

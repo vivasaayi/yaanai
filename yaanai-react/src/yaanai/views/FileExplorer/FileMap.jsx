@@ -1,132 +1,97 @@
-import {invoke} from "@tauri-apps/api/core";
-
-import React, {useState, useEffect} from "react";
+import React, { useState } from "react";
 import { useFileSystem } from './FileSystemContext';
 import {
-    CButton,
-    CCard,
-    CCardBody, CCardFooter, CCardGroup,
-    CCardHeader,
-    CCardImage, CCardLink,
-    CCardSubtitle,
-    CCardText,
-    CCardTitle,
-    CCol, CListGroup, CListGroupItem, CNav, CNavItem, CNavLink, CRow
+    CButton, CCard, CCardBody, CCardHeader, CCol, CRow,
+    CBadge, CCollapse, CFormCheck
 } from "@coreui/react";
-
-import {DocsExample} from "../../../coreui/components/index.js";
-import ReactImg from "../../../assets/images/react.jpg";
-
 import CIcon from "@coreui/icons-react";
-import {cilFile, cilFolder} from "@coreui/icons";
-
-import {
-    DataGrid,
-    Column
-} from 'devextreme-react/data-grid';
-
-import { Template } from 'devextreme-react/core/template';
-
-import TreeList, {
-    Column as TreeListColumn, ColumnChooser, HeaderFilter, SearchPanel, Selection, Lookup,
-} from 'devextreme-react/tree-list';
-
-
+import { cilFile, cilTrash, cilCopy } from "@coreui/icons";
+import { DataGrid, Column } from 'devextreme-react/data-grid';
 import 'devextreme/dist/css/dx.light.css';
-
-// Add custom styles for animations
-const styles = `
-    .spin {
-        animation: spin 1s linear infinite;
-    }
-    
-    @keyframes spin {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
-    }
-`;
-
-// Inject styles
-if (typeof document !== 'undefined') {
-    const styleSheet = document.createElement("style");
-    styleSheet.type = "text/css";
-    styleSheet.innerText = styles;
-    document.head.appendChild(styleSheet);
-}
 
 function FileMap() {
     const {
-        currentPath,
-        loading,
-        setCurrentPath,
-        findDuplicates,
-        chooseFolder
+        currentPath, loading, setCurrentPath, findTrueDuplicates,
+        deleteFiles, chooseFolder, progressText
     } = useFileSystem();
 
-    const [files, setFiles] = useState([]);
+    const [scanResult, setScanResult] = useState(null);
+    const [selectedFiles, setSelectedFiles] = useState(new Set());
+    const [expandedGroups, setExpandedGroups] = useState(new Set());
 
-    // Update local files when analysis is run
-    useEffect(() => {
-        if (files.length > 0) {
-            // Files are already set from the analysis
-        }
-    }, [files]);
-
-    async function fetchFiles() {
+    async function runScan() {
         try {
-            const duplicates = await findDuplicates();
-            if (duplicates) {
-                setFiles(duplicates);
+            const result = await findTrueDuplicates();
+            if (result) {
+                setScanResult(result);
+                setSelectedFiles(new Set());
             }
         } catch (error) {
-            setFiles([]);
+            setScanResult(null);
         }
     }
 
-    function handlePathChange(e) {
-        const path = e.target.getAttribute("data-path")
-        // stack.push(currentPath)
-        // setCurrentPath(path);
+    function toggleGroup(hash) {
+        setExpandedGroups(prev => {
+            const next = new Set(prev);
+            if (next.has(hash)) next.delete(hash);
+            else next.add(hash);
+            return next;
+        });
     }
 
-    function renderFileName(data) {
-        if(data.data.is_dir) {
-            return (<>
-                    <span data-path={data.data.path} onClick={handlePathChange}>
-                        <CIcon className="text-success" data-path={data.data.path} icon={cilFolder}/>
-                            <b data-path={data.data.path} > {data.value}</b></span>
-                </>
-            );
+    function toggleFileSelection(path) {
+        setSelectedFiles(prev => {
+            const next = new Set(prev);
+            if (next.has(path)) next.delete(path);
+            else next.add(path);
+            return next;
+        });
+    }
+
+    function selectAllDuplicatesInGroup(group) {
+        setSelectedFiles(prev => {
+            const next = new Set(prev);
+            // Select all except the first file in the group (keep one original)
+            group.files.slice(1).forEach(f => next.add(f.path));
+            return next;
+        });
+    }
+
+    async function handleDelete() {
+        if (selectedFiles.size === 0) return;
+        const paths = Array.from(selectedFiles);
+        try {
+            const result = await deleteFiles(paths, true);
+            if (result) {
+                // Re-scan to update the list
+                await runScan();
+            }
+        } catch (error) {
+            console.error("Delete failed:", error);
         }
-        return <>
-            <span data-path={data.data.path}>
-                <CIcon data-path={data.data.path} icon={cilFile}/> {data.value}</span>
-        </>;
     }
 
-    function renderFiles() {
-        const result = [];
-        (files || []).forEach(file => {
-            result.push(<p>{file}</p>)
-        })
-        return result;
-    }
+    const groups = scanResult?.groups || [];
+    const hasResults = scanResult !== null;
 
-    return (<>
+    return (
         <CRow>
             <CCol xs={12}>
                 <CCard className="mb-4">
                     <CCardHeader>
-                        Duplicate Files
+                        <div className="d-flex justify-content-between align-items-center">
+                            <span>True Duplicate Finder (SHA256)</span>
+                            <small className="text-muted">{currentPath}</small>
+                        </div>
                     </CCardHeader>
                     <CCardBody>
-                        {/* Control Panel */}
+                        {/* Controls */}
                         <div className="mb-3">
                             <div className="d-flex gap-2 align-items-center mb-2">
                                 <CButton onClick={chooseFolder} color="secondary" size="sm">
-                                    <CIcon icon="cil-folder" className="me-1" />Choose Folder
+                                    Choose Folder
                                 </CButton>
-                                
                                 <div className="flex-grow-1">
                                     <input
                                         type="text"
@@ -137,57 +102,134 @@ function FileMap() {
                                         disabled={loading}
                                     />
                                 </div>
-                                
-                                <CButton 
-                                    onClick={fetchFiles} 
-                                    color={files.length > 0 ? "success" : "primary"}
+                                <CButton
+                                    onClick={runScan}
+                                    color={hasResults ? "success" : "primary"}
                                     disabled={loading || !currentPath}
                                     size="sm"
                                 >
-                                    {loading ? (
-                                        <>
-                                            <CIcon icon="cil-sync" className="spin me-1" />
-                                            Scanning...
-                                        </>
-                                    ) : files.length > 0 ? (
-                                        <>
-                                            <CIcon icon="cil-refresh" className="me-1" />
-                                            Re-scan
-                                        </>
-                                    ) : (
-                                        <>
-                                            <CIcon icon="cil-copy" className="me-1" />
-                                            Find Duplicates
-                                        </>
-                                    )}
+                                    {loading ? "Scanning..." : hasResults ? "Re-scan" : "Find Duplicates"}
                                 </CButton>
+                                {selectedFiles.size > 0 && (
+                                    <CButton
+                                        onClick={handleDelete}
+                                        color="danger"
+                                        size="sm"
+                                        disabled={loading}
+                                    >
+                                        <CIcon icon={cilTrash} className="me-1" />
+                                        Delete {selectedFiles.size} file(s)
+                                    </CButton>
+                                )}
                             </div>
-                            
-                            {/* Status indicator */}
-                            {currentPath && !loading && (
-                                <div className="small text-muted">
-                                    <CIcon icon={files.length > 0 ? "cil-check-circle" : "cil-clock"} className={`me-1 ${files.length > 0 ? 'text-success' : 'text-warning'}`} />
-                                    {files.length > 0 ? `${files.length} duplicate groups found` : 'Ready to scan - click "Find Duplicates" to begin'}
-                                </div>
+                            {progressText && (
+                                <div className="small text-muted">{progressText}</div>
                             )}
                         </div>
-                        <DataGrid id="dataGrid"
-                                  allowColumnResizing={true}
-                                  dataSource={files}
-                                  className="mt-3">
-                            <Column dataField="disk_entry.name" cellRender={renderFileName}/>
-                            <Column dataField="disk_entry.path" />
-                            <Column dataField="disk_entry.size" />
-                            <Column dataField="disk_entry.size_h" />
-                            <Column dataField="disk_entry.is_dir" />
-                            <Column dataField="disk_entry.is_file" />
-                        </DataGrid>
 
+                        {/* Summary */}
+                        {hasResults && (
+                            <div className="mb-3 p-3 border rounded bg-light">
+                                <div className="d-flex gap-4">
+                                    <div>
+                                        <strong>{scanResult.total_files_scanned}</strong>
+                                        <div className="small text-muted">Files Scanned</div>
+                                    </div>
+                                    <div>
+                                        <strong className="text-warning">{groups.length}</strong>
+                                        <div className="small text-muted">Duplicate Groups</div>
+                                    </div>
+                                    <div>
+                                        <strong className="text-danger">{scanResult.total_duplicates}</strong>
+                                        <div className="small text-muted">Duplicate Files</div>
+                                    </div>
+                                    <div>
+                                        <strong className="text-danger">{scanResult.total_wasted_space_h}</strong>
+                                        <div className="small text-muted">Wasted Space</div>
+                                    </div>
+                                </div>
+                                {scanResult.errors.length > 0 && (
+                                    <div className="mt-2 small text-warning">
+                                        {scanResult.errors.length} scan errors encountered
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Duplicate Groups */}
+                        {groups.length > 0 ? (
+                            <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+                                {groups.map((group, gi) => (
+                                    <div key={group.hash} className="border rounded mb-2">
+                                        <div
+                                            className="d-flex justify-content-between align-items-center p-2 bg-light"
+                                            style={{ cursor: 'pointer' }}
+                                            onClick={() => toggleGroup(group.hash)}
+                                        >
+                                            <div className="d-flex align-items-center gap-2">
+                                                <CIcon icon={cilCopy} className="text-warning" />
+                                                <strong>{group.files[0]?.name || 'Unknown'}</strong>
+                                                <CBadge color="warning">{group.files.length} copies</CBadge>
+                                                <CBadge color="info">{group.size_h} each</CBadge>
+                                                <CBadge color="danger">Wasting {group.wasted_space_h}</CBadge>
+                                            </div>
+                                            <div className="d-flex gap-2">
+                                                <CButton
+                                                    size="sm"
+                                                    color="outline-danger"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        selectAllDuplicatesInGroup(group);
+                                                    }}
+                                                >
+                                                    Select Duplicates
+                                                </CButton>
+                                                <span>{expandedGroups.has(group.hash) ? '\u25B2' : '\u25BC'}</span>
+                                            </div>
+                                        </div>
+                                        <CCollapse visible={expandedGroups.has(group.hash)}>
+                                            <div className="p-2">
+                                                {group.files.map((file, fi) => (
+                                                    <div
+                                                        key={file.path}
+                                                        className={`d-flex align-items-center gap-2 p-1 ${fi === 0 ? 'border-start border-3 border-success ps-2' : ''}`}
+                                                    >
+                                                        <CFormCheck
+                                                            checked={selectedFiles.has(file.path)}
+                                                            onChange={() => toggleFileSelection(file.path)}
+                                                        />
+                                                        <CIcon icon={cilFile} className="text-primary" size="sm" />
+                                                        <span className="flex-grow-1 small text-truncate" title={file.path}>
+                                                            {file.path}
+                                                        </span>
+                                                        <span className="small text-muted">{file.size_h}</span>
+                                                        {fi === 0 && (
+                                                            <CBadge color="success" size="sm">Original</CBadge>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                <div className="small text-muted mt-1">
+                                                    SHA256: {group.hash.substring(0, 16)}...
+                                                </div>
+                                            </div>
+                                        </CCollapse>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : hasResults ? (
+                            <div className="text-center p-4 text-muted">
+                                No duplicate files found in this directory.
+                            </div>
+                        ) : (
+                            <div className="text-center p-4 text-muted">
+                                Select a folder and click "Find Duplicates" to scan for duplicate files using SHA256 content hashing.
+                            </div>
+                        )}
                     </CCardBody>
                 </CCard>
             </CCol>
         </CRow>
-    </>);
+    );
 }
 
-export default  FileMap;
+export default FileMap;
