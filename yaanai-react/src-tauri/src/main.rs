@@ -6,6 +6,7 @@
 extern crate yaanaiapp;
 
 use std::sync::Arc;
+use tauri::Emitter;
 use yaanaiapp::db::Database;
 use yaanaiapp::file_manager::FileManager;
 use yaanaiapp::types::DiskEntry;
@@ -99,13 +100,20 @@ fn get_home_directory() -> String {
 #[tauri::command]
 async fn find_true_duplicates(
     folder_name: String,
+    window: tauri::Window,
     state: tauri::State<'_, AppState>,
 ) -> Result<duplicate_detector::DuplicateScanResult, String> {
     let ignore_matcher = state.get_ignore_matcher();
     let folder = folder_name.clone();
 
     tokio::task::spawn_blocking(move || {
-        duplicate_detector::find_duplicates(&folder, &ignore_matcher)
+        let progress_cb = std::sync::Arc::new(std::sync::Mutex::new(
+            Box::new(move |progress: duplicate_detector::DuplicateScanProgress| {
+                let _ = window.emit("duplicate-progress", &progress);
+            }) as Box<dyn Fn(duplicate_detector::DuplicateScanProgress) + Send>,
+        ));
+
+        duplicate_detector::find_duplicates_with_progress(&folder, &ignore_matcher, Some(progress_cb))
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

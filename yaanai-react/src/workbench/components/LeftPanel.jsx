@@ -1,0 +1,201 @@
+/**
+ * LeftPanel — Sidebar showing:
+ * - Favorites (quick navigation)
+ * - Scan History (load previous snapshots)
+ * - Mini directory tree (from current snapshot)
+ */
+
+import React, { useState } from 'react';
+import { useScanState, ScanStatus } from '../state/ScanStateContext';
+import { CBadge, CButton } from '@coreui/react';
+import CIcon from '@coreui/icons-react';
+import { cilStar, cilHistory, cilFolder, cilFile, cilTrash, cilChevronRight, cilChevronBottom } from '@coreui/icons';
+
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+}
+
+function timeAgo(date) {
+    if (!date) return '';
+    const seconds = Math.floor((new Date() - date) / 1000);
+    if (seconds < 60) return 'just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+// Mini tree node
+function TreeNodeItem({ node, depth = 0 }) {
+    const [expanded, setExpanded] = useState(depth < 1);
+    const isDir = node.node_type === 'directory';
+    const hasChildren = node.children && node.children.length > 0;
+    const name = node.disk_entry?.path?.split('/').pop() || 'root';
+
+    if (!isDir && depth > 0) {
+        return null; // Only show directories in left panel tree
+    }
+
+    const childDirs = hasChildren
+        ? node.children
+            .filter(c => c.node_type === 'directory')
+            .sort((a, b) => b.disk_entry.size - a.disk_entry.size)
+            .slice(0, 15)
+        : [];
+
+    return (
+        <div>
+            <div
+                className="d-flex align-items-center py-1 px-1 tree-node-hover"
+                style={{ paddingLeft: `${depth * 12 + 4}px`, cursor: hasChildren ? 'pointer' : 'default', fontSize: '12px' }}
+                onClick={() => hasChildren && setExpanded(!expanded)}
+            >
+                {hasChildren ? (
+                    <CIcon icon={expanded ? cilChevronBottom : cilChevronRight}
+                        size="sm" className="me-1 text-muted" style={{ width: '12px' }} />
+                ) : (
+                    <span style={{ width: '16px', display: 'inline-block' }} />
+                )}
+                <CIcon icon={cilFolder} size="sm" className="me-1 text-warning" />
+                <span className="text-truncate flex-grow-1" title={name}>{name}</span>
+                <span className="text-muted ms-1" style={{ fontSize: '10px', whiteSpace: 'nowrap' }}>
+                    {formatBytes(node.disk_entry?.size)}
+                </span>
+            </div>
+            {expanded && childDirs.map((child, i) => (
+                <TreeNodeItem key={child.disk_entry?.path || i} node={child} depth={depth + 1} />
+            ))}
+        </div>
+    );
+}
+
+export default function LeftPanel() {
+    const {
+        favorites, removeFavorite, navigateAndScan,
+        snapshotHistory, loadSnapshot, currentSnapshot,
+        status
+    } = useScanState();
+
+    const [section, setSection] = useState('favorites');
+
+    return (
+        <div className="left-panel d-flex flex-column h-100 bg-white border-end"
+             style={{ width: '250px', minWidth: '200px', fontSize: '13px', overflow: 'hidden' }}>
+
+            {/* Section tabs */}
+            <div className="d-flex border-bottom" style={{ fontSize: '11px' }}>
+                <button
+                    className={`btn btn-sm flex-fill rounded-0 border-0 ${section === 'favorites' ? 'btn-light fw-bold' : 'btn-white text-muted'}`}
+                    onClick={() => setSection('favorites')}
+                >
+                    <CIcon icon={cilStar} size="sm" className="me-1" />
+                    Favorites
+                </button>
+                <button
+                    className={`btn btn-sm flex-fill rounded-0 border-0 ${section === 'history' ? 'btn-light fw-bold' : 'btn-white text-muted'}`}
+                    onClick={() => setSection('history')}
+                >
+                    <CIcon icon={cilHistory} size="sm" className="me-1" />
+                    History
+                </button>
+                <button
+                    className={`btn btn-sm flex-fill rounded-0 border-0 ${section === 'tree' ? 'btn-light fw-bold' : 'btn-white text-muted'}`}
+                    onClick={() => setSection('tree')}
+                >
+                    <CIcon icon={cilFolder} size="sm" className="me-1" />
+                    Tree
+                </button>
+            </div>
+
+            {/* Section content */}
+            <div className="flex-grow-1" style={{ overflowY: 'auto' }}>
+
+                {/* Favorites */}
+                {section === 'favorites' && (
+                    <div className="p-2">
+                        {favorites.length === 0 ? (
+                            <div className="text-muted text-center py-4" style={{ fontSize: '12px' }}>
+                                No favorites yet.<br />
+                                Click the star icon in the header to add folders.
+                            </div>
+                        ) : (
+                            favorites.map((fav) => (
+                                <div key={fav.id}
+                                    className="d-flex align-items-center py-1 px-2 rounded mb-1 tree-node-hover"
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => navigateAndScan(fav.path)}
+                                >
+                                    <CIcon icon={cilStar} size="sm" className="me-2 text-warning" />
+                                    <div className="flex-grow-1 text-truncate">
+                                        <div className="fw-semibold" style={{ fontSize: '12px' }}>{fav.name}</div>
+                                        <div className="text-muted text-truncate" style={{ fontSize: '10px' }}>{fav.path}</div>
+                                    </div>
+                                    <CButton
+                                        size="sm"
+                                        color="light"
+                                        className="p-0 border-0"
+                                        onClick={(e) => { e.stopPropagation(); removeFavorite(fav.path); }}
+                                        title="Remove"
+                                    >
+                                        <CIcon icon={cilTrash} size="sm" className="text-danger" />
+                                    </CButton>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                )}
+
+                {/* History */}
+                {section === 'history' && (
+                    <div className="p-2">
+                        {snapshotHistory.length === 0 ? (
+                            <div className="text-muted text-center py-4" style={{ fontSize: '12px' }}>
+                                No scan history yet.<br />
+                                Scan a directory to start.
+                            </div>
+                        ) : (
+                            snapshotHistory.map((snap) => {
+                                const isCurrent = currentSnapshot?.version === snap.version;
+                                return (
+                                    <div key={snap.version}
+                                        className={`p-2 rounded mb-1 ${isCurrent ? 'bg-light border' : 'tree-node-hover'}`}
+                                        style={{ cursor: isCurrent ? 'default' : 'pointer' }}
+                                        onClick={() => !isCurrent && loadSnapshot(snap)}
+                                    >
+                                        <div className="d-flex align-items-center">
+                                            <CIcon icon={cilHistory} size="sm" className="me-2 text-primary" />
+                                            <div className="flex-grow-1">
+                                                <div style={{ fontSize: '12px' }} className="fw-semibold text-truncate">
+                                                    {snap.path.split('/').pop() || snap.path}
+                                                </div>
+                                                <div className="text-muted" style={{ fontSize: '10px' }}>
+                                                    {snap.fileCount} files &middot; {snap.totalSizeH} &middot; {timeAgo(snap.scannedAt)}
+                                                </div>
+                                            </div>
+                                            {isCurrent && <CBadge color="success" size="sm">current</CBadge>}
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+                )}
+
+                {/* Mini Tree */}
+                {section === 'tree' && (
+                    <div className="p-1">
+                        {currentSnapshot?.tree ? (
+                            <TreeNodeItem node={currentSnapshot.tree} depth={0} />
+                        ) : (
+                            <div className="text-muted text-center py-4" style={{ fontSize: '12px' }}>
+                                Scan a directory to see the tree.
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

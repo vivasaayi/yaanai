@@ -13,7 +13,11 @@
       "Bash(find /Users/rajanpanneerselvam/work/yaanai -name db_*.rs -o -name *schema* -o -name *pipeline*)",
       "Bash(npm install:*)",
       "Bash(npx tauri:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(lsof -ti:1420)",
+      "Bash(xargs kill:*)",
+      "Bash(cargo tauri:*)",
+      "Bash(cargo build:*)"
     ]
   }
 }

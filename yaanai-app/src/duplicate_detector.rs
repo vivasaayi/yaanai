@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use rayon::prelude::*;
 
 use crate::ignore_matcher::IgnoreMatcher;
 
@@ -44,11 +46,24 @@ pub struct DuplicateScanProgress {
     pub groups_found: u64,
 }
 
-/// Find true duplicate files using SHA256 content hashing.
-/// Strategy: group by size first (fast), then hash only the candidates.
+/// Progress callback for reporting hashing progress
+pub type ProgressCallback = Arc<Mutex<Box<dyn Fn(DuplicateScanProgress) + Send>>>;
+
+/// Find true duplicate files using SHA256 content hashing with optimizations:
+/// 1. Size-based pre-filtering (fast)
+/// 2. Parallel hashing using rayon (multi-core)
+/// 3. Optional progress reporting
 pub fn find_duplicates(
     folder: &str,
     ignore_matcher: &IgnoreMatcher,
+) -> Result<DuplicateScanResult, String> {
+    find_duplicates_with_progress(folder, ignore_matcher, None)
+}
+
+pub fn find_duplicates_with_progress(
+    folder: &str,
+    ignore_matcher: &IgnoreMatcher,
+    progress_cb: Option<ProgressCallback>,
 ) -> Result<DuplicateScanResult, String> {
     let mut errors: Vec<String> = Vec::new();
     let mut files_by_size: HashMap<u64, Vec<(String, String)>> = HashMap::new();
@@ -63,22 +78,46 @@ pub fn find_duplicates(
         ignore_matcher,
     );
 
+    // Report phase 1 progress
+    if let Some(cb) = &progress_cb {
+        if let Ok(callback) = cb.lock() {
+            callback(DuplicateScanProgress {
+                phase: "grouping".to_string(),
+                current_file: String::new(),
+                files_processed: total_scanned,
+                total_candidates: files_by_size.values().map(|v| v.len()).sum::<usize>() as u64,
+                groups_found: 0,
+            });
+        }
+    }
+
     // Phase 2: Filter to only sizes with multiple files (potential duplicates)
     let candidates: HashMap<u64, Vec<(String, String)>> = files_by_size
         .into_iter()
         .filter(|(_, files)| files.len() > 1)
         .collect();
 
-    // Phase 3: Hash files within each size group
+    let total_candidates: u64 = candidates.values().map(|v| v.len()).sum::<usize>() as u64;
+
+    // Phase 3: Hash files within each size group (using parallel hashing)
     let mut duplicate_groups: Vec<DuplicateGroup> = Vec::new();
     let mut total_duplicates: u64 = 0;
     let mut total_wasted: u64 = 0;
+    let mut files_processed: u64 = 0;
 
-    for (size, files) in &candidates {
+    for (size, files) in candidates {
+        // Hash files in parallel using rayon
+        let hash_results: Vec<(String, String, Result<String, String>)> = files
+            .par_iter()
+            .map(|(path, name)| (path.clone(), name.clone(), hash_file(path)))
+            .collect();
+
         let mut hash_groups: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
-        for (path, name) in files {
-            match hash_file(path) {
+        for (path, name, hash_result) in hash_results {
+            files_processed += 1;
+
+            match hash_result {
                 Ok(hash) => {
                     hash_groups
                         .entry(hash)
@@ -87,6 +126,21 @@ pub fn find_duplicates(
                 }
                 Err(e) => {
                     errors.push(format!("Failed to hash {}: {}", path, e));
+                }
+            }
+
+            // Report progress every 10 files
+            if files_processed % 10 == 0 {
+                if let Some(cb) = &progress_cb {
+                    if let Ok(mut callback) = cb.lock() {
+                        callback(DuplicateScanProgress {
+                            phase: "hashing".to_string(),
+                            current_file: path,
+                            files_processed,
+                            total_candidates,
+                            groups_found: hash_groups.values().filter(|g| g.len() > 1).count() as u64,
+                        });
+                    }
                 }
             }
         }
@@ -99,8 +153,8 @@ pub fn find_duplicates(
 
                 duplicate_groups.push(DuplicateGroup {
                     hash,
-                    size: *size,
-                    size_h: bytesize::ByteSize::b(*size).to_string(),
+                    size,
+                    size_h: bytesize::ByteSize::b(size).to_string(),
                     wasted_space: wasted,
                     wasted_space_h: bytesize::ByteSize::b(wasted).to_string(),
                     files: group_files
@@ -108,12 +162,25 @@ pub fn find_duplicates(
                         .map(|(path, name)| DuplicateFile {
                             path,
                             name,
-                            size: *size,
-                            size_h: bytesize::ByteSize::b(*size).to_string(),
+                            size,
+                            size_h: bytesize::ByteSize::b(size).to_string(),
                         })
                         .collect(),
                 });
             }
+        }
+    }
+
+    // Final progress report
+    if let Some(cb) = &progress_cb {
+        if let Ok(callback) = cb.lock() {
+            callback(DuplicateScanProgress {
+                phase: "complete".to_string(),
+                current_file: String::new(),
+                files_processed,
+                total_candidates,
+                groups_found: duplicate_groups.len() as u64,
+            });
         }
     }
 
@@ -182,12 +249,13 @@ fn collect_files_by_size(
     }
 }
 
+/// Hash a file's content using SHA256
 fn hash_file(path: &str) -> Result<String, String> {
     let mut file = fs::File::open(path)
         .map_err(|e| format!("Cannot open file: {}", e))?;
 
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
+    let mut buffer = [0u8; 65536]; // 64KB buffer for faster reading
 
     loop {
         let bytes_read = file.read(&mut buffer)
