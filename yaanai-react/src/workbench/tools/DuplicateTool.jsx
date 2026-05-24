@@ -7,13 +7,13 @@
  * - Live stats during scan
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useScanState } from '../state/ScanStateContext';
 import { CButton, CBadge, CCollapse, CFormCheck, CProgress, CProgressBar } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilFile, cilTrash, cilCopy } from '@coreui/icons';
+import { cilFile, cilTrash, cilCopy, cilMediaStop } from '@coreui/icons';
 
 export default function DuplicateTool() {
     const { currentPath } = useScanState();
@@ -24,6 +24,7 @@ export default function DuplicateTool() {
     const [expandedGroups, setExpandedGroups] = useState(new Set());
     const [deleting, setDeleting] = useState(false);
     const [exporting, setExporting] = useState(false);
+    const [displayedProgressPercent, setDisplayedProgressPercent] = useState(0);
 
     // Progress state
     const [progress, setProgress] = useState(null);
@@ -54,7 +55,10 @@ export default function DuplicateTool() {
                     }
                     break;
                 case 'complete':
-                    text = `Scan complete: ${p.groups_found} duplicate groups, ${p.files_processed} files hashed`;
+                    text = `Scan complete: ${p.groups_found} duplicate groups, ${p.files_hashed} files hashed, ${p.cached_hashes_reused} cache hits`;
+                    break;
+                case 'cancelled':
+                    text = `Cancelling scan... processed ${p.files_processed} candidates so far`;
                     break;
                 default:
                     text = p.current_file;
@@ -67,21 +71,60 @@ export default function DuplicateTool() {
         };
     }, []);
 
+    const progressPercent = useMemo(() => {
+        if (!progress || progress.total_candidates <= 0 || progress.phase !== 'hashing') {
+            return 0;
+        }
+        return Math.round((progress.files_processed / progress.total_candidates) * 100);
+    }, [progress]);
+
+    useEffect(() => {
+        if (!scanning) {
+            setDisplayedProgressPercent(progressPercent);
+            return undefined;
+        }
+
+        const nextFrame = window.requestAnimationFrame(() => {
+            setDisplayedProgressPercent((previous) => {
+                const delta = progressPercent - previous;
+                if (Math.abs(delta) < 1) {
+                    return progressPercent;
+                }
+                return previous + delta * 0.2;
+            });
+        });
+
+        return () => window.cancelAnimationFrame(nextFrame);
+    }, [progressPercent, scanning]);
+
     async function runScan() {
         if (!currentPath) return;
         setScanning(true);
-        setScanResult(null);
         setSelectedFiles(new Set());
         setProgress(null);
         setProgressText('Initializing scan...');
         try {
             const result = await invoke("find_true_duplicates", { folderName: currentPath });
+            if (result.cancelled) {
+                setProgressText(`Scan cancelled after ${result.files_hashed + result.cached_hashes_reused} candidates`);
+                return;
+            }
             setScanResult(result);
         } catch (e) {
             console.error("Duplicate scan failed:", e);
             setProgressText("Scan failed: " + e);
+        } finally {
+            setScanning(false);
         }
-        setScanning(false);
+    }
+
+    async function cancelScan() {
+        setProgressText('Cancelling scan...');
+        try {
+            await invoke('cancel_duplicate_scan');
+        } catch (e) {
+            console.error('Cancel failed:', e);
+        }
     }
 
     function toggleGroup(hash) {
@@ -150,9 +193,7 @@ export default function DuplicateTool() {
     }
 
     const groups = scanResult?.groups || [];
-    const progressPercent = progress && progress.total_candidates > 0
-        ? Math.round((progress.files_processed / progress.total_candidates) * 100)
-        : 0;
+    const indeterminateProgress = scanning && progress && progress.phase !== 'hashing' && progress.phase !== 'complete';
 
     return (
         <div className="p-3">
@@ -163,6 +204,13 @@ export default function DuplicateTool() {
                         <><span className="spinner-border spinner-border-sm me-1" /> Scanning...</>
                     ) : scanResult ? 'Re-scan' : 'Find Duplicates'}
                 </CButton>
+
+                {scanning && (
+                    <CButton onClick={cancelScan} color="outline-danger" size="sm">
+                        <CIcon icon={cilMediaStop} className="me-1" />
+                        Cancel
+                    </CButton>
+                )}
 
                 {scanResult && groups.length > 0 && (
                     <CButton onClick={selectAllDuplicates} color="outline-warning" size="sm">
@@ -190,23 +238,29 @@ export default function DuplicateTool() {
                 <div className="mb-3">
                     <div className="d-flex justify-content-between align-items-center mb-2" style={{ fontSize: '12px' }}>
                         <span className="text-muted">{progressText}</span>
-                        {progress && <span className="badge bg-info">{progressPercent}%</span>}
+                        {progress && progress.phase === 'hashing' && <span className="badge bg-info">{progressPercent}%</span>}
                     </div>
                     <CProgress className="mb-2" style={{ height: '24px' }}>
-                        <CProgressBar animated color="primary" value={progressPercent} />
+                        <CProgressBar animated color={indeterminateProgress ? 'info' : 'primary'} value={indeterminateProgress ? 100 : displayedProgressPercent} />
                     </CProgress>
 
                     {/* Live stats during hashing */}
                     {progress && (
                         <div className="d-flex gap-4 p-2 bg-light border rounded" style={{ fontSize: '12px' }}>
                             <div>
-                                <span className="text-muted">Files Hashed:</span> <strong>{progress.files_processed}</strong>
+                                <span className="text-muted">Candidates Processed:</span> <strong>{progress.files_processed}</strong>
                             </div>
                             <div>
                                 <span className="text-muted">Total Candidates:</span> <strong>{progress.total_candidates}</strong>
                             </div>
                             <div>
                                 <span className="text-muted">Groups Found:</span> <strong className="text-warning">{progress.groups_found}</strong>
+                            </div>
+                            <div>
+                                <span className="text-muted">Files Hashed:</span> <strong>{progress.files_hashed}</strong>
+                            </div>
+                            <div>
+                                <span className="text-muted">Cache Hits:</span> <strong className="text-success">{progress.cached_hashes_reused}</strong>
                             </div>
                             {progress.current_file && (
                                 <div className="flex-grow-1 text-truncate" style={{ fontSize: '11px' }}>
@@ -236,6 +290,18 @@ export default function DuplicateTool() {
                     <div>
                         <strong className="text-danger">{scanResult.total_wasted_space_h}</strong>
                         <div className="text-muted small">Wasted Space</div>
+                    </div>
+                    <div>
+                        <strong className="text-success">{scanResult.cached_hashes_reused}</strong>
+                        <div className="text-muted small">Cache Hits</div>
+                    </div>
+                    <div>
+                        <strong>{scanResult.files_hashed}</strong>
+                        <div className="text-muted small">Files Hashed</div>
+                    </div>
+                    <div>
+                        <strong>{(scanResult.duration_ms / 1000).toFixed(2)}s</strong>
+                        <div className="text-muted small">Elapsed</div>
                     </div>
                     {scanResult.errors.length > 0 && (
                         <div>
@@ -304,7 +370,7 @@ export default function DuplicateTool() {
                     <CIcon icon={cilCopy} size="3xl" className="mb-3 text-muted" />
                     <h6>Duplicate Finder</h6>
                     <p>Click "Find Duplicates" to scan for files with identical content using SHA256 hashing.</p>
-                    <p className="small">Uses parallel hashing for fast performance on multi-core systems.</p>
+                    <p className="small">Uses parallel hashing with incremental cache reuse for faster repeat scans.</p>
                 </div>
             ) : null}
         </div>

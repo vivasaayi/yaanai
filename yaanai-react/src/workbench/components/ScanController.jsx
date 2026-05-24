@@ -30,7 +30,7 @@ export default function ScanController() {
     const {
         status, isScanning, hasData, currentPath, navigateTo,
         startScan, scanProgress, scanProgressText, currentSnapshot,
-        scannedTimeAgo, isFavorite, addFavorite, removeFavorite,
+        scannedTimeAgo, isFavorite, addFavorite, removeFavorite, staleStatus,
     } = useScanState();
 
     const [pathInput, setPathInput] = useState('');
@@ -176,6 +176,11 @@ export default function ScanController() {
                     {currentSnapshot.errors.length > 0 && (
                         <CBadge color="warning" size="sm">
                             {currentSnapshot.errors.length} errors
+                        </CBadge>
+                    )}
+                    {staleStatus.stale && (
+                        <CBadge color="danger" size="sm" title={staleStatus.changedPath || 'Files changed since last scan'}>
+                            Stale
                         </CBadge>
                     )}
                     {status === ScanStatus.RE_SCANNING && (

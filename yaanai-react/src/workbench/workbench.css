@@ -1,7 +1,136 @@
 /* Workbench Layout Styles */
 
+:root {
+    --workbench-bg: #eef2f6;
+    --workbench-surface: #ffffff;
+    --workbench-surface-alt: #f8fafc;
+    --workbench-border: #d7dee7;
+    --workbench-text: #15202b;
+    --workbench-muted: #637487;
+    --workbench-accent: #1d6fd8;
+    --workbench-overlay: rgba(14, 33, 56, 0.2);
+}
+
+:root[data-theme='dark'] {
+    --workbench-bg: #0f141a;
+    --workbench-surface: #151d26;
+    --workbench-surface-alt: #1b2530;
+    --workbench-border: #2f3d4c;
+    --workbench-text: #e8eef5;
+    --workbench-muted: #9fb0c2;
+    --workbench-accent: #75b3ff;
+    --workbench-overlay: rgba(2, 6, 12, 0.72);
+}
+
 .workbench-root {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--workbench-bg);
+    color: var(--workbench-text);
+}
+
+.workbench-root .bg-white,
+.workbench-root .bg-light,
+.workbench-root .card,
+.workbench-root .list-group-item,
+.workbench-root .table-light,
+.workbench-root .form-control,
+.workbench-root .input-group-text,
+.workbench-root .nav,
+.workbench-root .left-panel,
+.workbench-root .scan-controller,
+.workbench-root .status-bar {
+    background-color: var(--workbench-surface) !important;
+    color: var(--workbench-text) !important;
+    border-color: var(--workbench-border) !important;
+}
+
+.workbench-root .bg-light,
+.workbench-root .table-light,
+.workbench-root .form-control,
+.workbench-root .input-group-text,
+.workbench-root .list-group-item,
+.workbench-root .left-panel {
+    background-color: var(--workbench-surface-alt) !important;
+}
+
+.workbench-root .form-control,
+.workbench-root .list-group-item,
+.workbench-root .card,
+.workbench-root .table,
+.workbench-root .table td,
+.workbench-root .table th {
+    color: var(--workbench-text) !important;
+}
+
+.workbench-root .text-muted,
+.workbench-root .small.text-muted {
+    color: var(--workbench-muted) !important;
+}
+
+.workbench-root .border,
+.workbench-root .border-bottom,
+.workbench-root .border-top,
+.workbench-root .border-end,
+.workbench-root .table,
+.workbench-root .table td,
+.workbench-root .table th {
+    border-color: var(--workbench-border) !important;
+}
+
+.workbench-root .nav-tabs .nav-link.active {
+    border-bottom-color: var(--workbench-accent);
+    color: var(--workbench-accent);
+}
+
+.workbench-root .nav-tabs .nav-link {
+    color: var(--workbench-muted);
+}
+
+.workbench-root .nav-tabs .nav-link:hover:not(.active) {
+    color: var(--workbench-text);
+}
+
+.workbench-root .table-hover tbody tr:hover {
+    background-color: rgba(29, 111, 216, 0.08) !important;
+}
+
+.workbench-root .btn-outline-secondary,
+.workbench-root .btn-outline-warning,
+.workbench-root .btn-outline-danger {
+    border-color: var(--workbench-border);
+}
+
+.workbench-drop-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--workbench-overlay);
+    backdrop-filter: blur(6px);
+}
+
+.workbench-drop-card {
+    min-width: 360px;
+    max-width: 72vw;
+    padding: 24px 28px;
+    border: 2px dashed var(--workbench-accent);
+    border-radius: 18px;
+    background: var(--workbench-surface);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.workbench-drop-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.workbench-drop-subtitle {
+    font-size: 13px;
+    color: var(--workbench-muted);
+    word-break: break-word;
 }
 
 /* Spin animation for loading indicators */
@@ -22,7 +151,7 @@
 
 /* Tree node hover in left panel */
 .tree-node-hover:hover {
-    background-color: #f8f9fa;
+    background-color: rgba(29, 111, 216, 0.08);
     border-radius: 4px;
 }
 
@@ -49,15 +178,15 @@
 }
 
 .nav-tabs .nav-link.active {
-    border-bottom-color: #0d6efd;
-    color: #0d6efd;
+    border-bottom-color: var(--workbench-accent);
+    color: var(--workbench-accent);
     font-weight: 600;
     background: transparent;
 }
 
 .nav-tabs .nav-link:hover:not(.active) {
     border-bottom-color: #dee2e6;
-    color: #212529;
+    color: var(--workbench-text);
 }
 
 /* Table improvements */

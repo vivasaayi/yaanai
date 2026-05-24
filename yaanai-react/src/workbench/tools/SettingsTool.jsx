@@ -7,14 +7,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { useScanState } from '../state/ScanStateContext';
 import { CButton, CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilStar, cilTrash, cilPlus } from '@coreui/icons';
+import { cilStar, cilTrash, cilPlus, cilMoon, cilSun } from '@coreui/icons';
 
 export default function SettingsTool() {
     const {
         favorites, ignorePatterns,
         addFavorite, removeFavorite,
         addIgnorePattern, removeIgnorePattern,
-        navigateAndScan
+        navigateAndScan, themeMode, setThemeMode, currentPath, activeTab
     } = useScanState();
 
     const [tab, setTab] = useState('patterns');
@@ -61,6 +61,11 @@ export default function SettingsTool() {
                 <CNavItem>
                     <CNavLink active={tab === 'database'} onClick={() => setTab('database')} style={{ cursor: 'pointer' }}>
                         Database
+                    </CNavLink>
+                </CNavItem>
+                <CNavItem>
+                    <CNavLink active={tab === 'appearance'} onClick={() => setTab('appearance')} style={{ cursor: 'pointer' }}>
+                        Appearance
                     </CNavLink>
                 </CNavItem>
             </CNav>
@@ -159,6 +164,46 @@ export default function SettingsTool() {
                     )}
                     <div className="small text-muted">
                         Database: <code>~/.yaanai/yaanai.db</code>
+                    </div>
+                </CTabPane>
+
+                <CTabPane visible={tab === 'appearance'}>
+                    <div className="border rounded p-3 mb-3">
+                        <div className="d-flex justify-content-between align-items-center mb-2">
+                            <div>
+                                <div className="fw-semibold">Theme</div>
+                                <div className="small text-muted">Applies immediately and persists across sessions.</div>
+                            </div>
+                            <div className="btn-group btn-group-sm">
+                                <CButton
+                                    color={themeMode === 'light' ? 'primary' : 'outline-secondary'}
+                                    onClick={() => setThemeMode('light')}
+                                >
+                                    <CIcon icon={cilSun} className="me-1" />Light
+                                </CButton>
+                                <CButton
+                                    color={themeMode === 'dark' ? 'primary' : 'outline-secondary'}
+                                    onClick={() => setThemeMode('dark')}
+                                >
+                                    <CIcon icon={cilMoon} className="me-1" />Dark
+                                </CButton>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="border rounded p-3 mb-3">
+                        <div className="fw-semibold mb-2">Persistent Workbench State</div>
+                        <div className="small text-muted mb-1">Last path: {currentPath || 'Not set'}</div>
+                        <div className="small text-muted mb-1">Last active tab: {activeTab}</div>
+                        <div className="small text-muted">Favorites are already stored in the local app database.</div>
+                    </div>
+
+                    <div className="border rounded p-3">
+                        <div className="fw-semibold mb-2">Keyboard Shortcuts</div>
+                        <div className="small text-muted mb-1">Cmd/Ctrl+D: open Duplicates</div>
+                        <div className="small text-muted mb-1">Cmd/Ctrl+F: open Search</div>
+                        <div className="small text-muted mb-1">Cmd/Ctrl+R: rescan current path</div>
+                        <div className="small text-muted">Cmd/Ctrl+1-6: switch workbench tabs</div>
                     </div>
                 </CTabPane>
             </CTabContent>

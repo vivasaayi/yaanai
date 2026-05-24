@@ -23,7 +23,7 @@ const statusDot = {
 
 export default function StatusBar() {
     const {
-        status, currentSnapshot, scannedTimeAgo, isScanning, scanProgressText
+        status, currentSnapshot, scannedTimeAgo, isScanning, scanProgressText, staleStatus, activeTab
     } = useScanState();
 
     const dot = statusDot[status];
@@ -63,8 +63,15 @@ export default function StatusBar() {
                     <span className="text-muted me-3">
                         v{snap.version}
                     </span>
+                    {staleStatus.stale && (
+                        <span className="text-warning me-3" title={staleStatus.changedPath || 'Files changed since last scan'}>
+                            stale state detected
+                        </span>
+                    )}
                 </>
             )}
+
+            <span className="text-muted me-3">Tab: {activeTab}</span>
 
             {/* Scanning text */}
             {isScanning && (

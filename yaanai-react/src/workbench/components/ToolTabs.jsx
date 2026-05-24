@@ -5,7 +5,7 @@
  * No tool can trigger scans — only ScanController does that.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { useScanState, ScanStatus } from '../state/ScanStateContext';
 import { CNav, CNavItem, CNavLink, CBadge } from '@coreui/react';
 
@@ -27,8 +27,7 @@ const TABS = [
 ];
 
 export default function ToolTabs() {
-    const { status, hasData, isScanning, currentSnapshot } = useScanState();
-    const [activeTab, setActiveTab] = useState('overview');
+    const { status, hasData, currentSnapshot, activeTab, setActiveTab } = useScanState();
 
     return (
         <div className="d-flex flex-column h-100">

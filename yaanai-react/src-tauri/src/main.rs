@@ -5,7 +5,11 @@
 
 extern crate yaanaiapp;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
+use std::{fs, path::Path};
+use serde::Serialize;
 use tauri::Emitter;
 use yaanaiapp::db::Database;
 use yaanaiapp::file_manager::FileManager;
@@ -21,6 +25,13 @@ use yaanaiapp::exporter;
 struct AppState {
     file_manager: FileManager,
     db: Arc<Database>,
+    duplicate_scan_cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StaleCheckResult {
+    stale: bool,
+    changed_path: Option<String>,
 }
 
 impl AppState {
@@ -29,6 +40,7 @@ impl AppState {
         Ok(Self {
             file_manager: FileManager::new(),
             db: Arc::new(db),
+            duplicate_scan_cancelled: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -105,6 +117,9 @@ async fn find_true_duplicates(
 ) -> Result<duplicate_detector::DuplicateScanResult, String> {
     let ignore_matcher = state.get_ignore_matcher();
     let folder = folder_name.clone();
+    let db = state.db.clone();
+    let cancel_flag = state.duplicate_scan_cancelled.clone();
+    cancel_flag.store(false, Ordering::Relaxed);
 
     tokio::task::spawn_blocking(move || {
         let progress_cb = std::sync::Arc::new(std::sync::Mutex::new(
@@ -113,10 +128,23 @@ async fn find_true_duplicates(
             }) as Box<dyn Fn(duplicate_detector::DuplicateScanProgress) + Send>,
         ));
 
-        duplicate_detector::find_duplicates_with_progress(&folder, &ignore_matcher, Some(progress_cb))
+        duplicate_detector::find_duplicates_with_progress(
+            &folder,
+            &ignore_matcher,
+            Some(progress_cb),
+            Some(db),
+            Some(cancel_flag),
+        )
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+fn cancel_duplicate_scan(
+    state: tauri::State<'_, AppState>,
+) {
+    state.duplicate_scan_cancelled.store(true, Ordering::Relaxed);
 }
 
 // --- File Search ---
@@ -280,6 +308,64 @@ fn get_db_stats(
     state.db.get_stats()
 }
 
+#[tauri::command]
+async fn check_path_stale(
+    path: String,
+    since_unix_secs: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<StaleCheckResult, String> {
+    let ignore_matcher = state.get_ignore_matcher();
+
+    tokio::task::spawn_blocking(move || {
+        let changed_path = detect_stale_path(Path::new(&path), since_unix_secs, &ignore_matcher)?;
+        Ok(StaleCheckResult {
+            stale: changed_path.is_some(),
+            changed_path,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+fn detect_stale_path(
+    path: &Path,
+    since_unix_secs: i64,
+    ignore_matcher: &IgnoreMatcher,
+) -> Result<Option<String>, String> {
+    let path_str = path.to_string_lossy().to_string();
+    if ignore_matcher.should_ignore(&path_str) {
+        return Ok(None);
+    }
+
+    let metadata = fs::metadata(path)
+        .map_err(|e| format!("Failed to read metadata for {}: {}", path.display(), e))?;
+
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default();
+
+    if modified_at > since_unix_secs {
+        return Ok(Some(path_str));
+    }
+
+    if metadata.is_dir() {
+        let entries = fs::read_dir(path)
+            .map_err(|e| format!("Failed to read directory {}: {}", path.display(), e))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Directory entry error in {}: {}", path.display(), e))?;
+            if let Some(changed_path) = detect_stale_path(&entry.path(), since_unix_secs, ignore_matcher)? {
+                return Ok(Some(changed_path));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 // --- Main ---
 
 fn main() {
@@ -299,6 +385,7 @@ fn main() {
             get_home_directory,
             // Duplicate detection
             find_true_duplicates,
+            cancel_duplicate_scan,
             // File search
             search_files,
             // File operations
@@ -316,6 +403,7 @@ fn main() {
             remove_ignore_pattern,
             // Database
             get_db_stats,
+            check_path_stale,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

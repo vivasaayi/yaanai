@@ -1,5 +1,6 @@
-use rusqlite::{Connection, params};
+use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -314,6 +315,72 @@ impl Database {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(format!("Failed to get file hash: {}", e)),
         }
+    }
+
+    pub fn get_file_hashes(&self, paths: &[String]) -> Result<HashMap<String, FileHashRecord>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut hashes = HashMap::new();
+
+        for chunk in paths.chunks(500) {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let query = format!(
+                "SELECT path, hash, size, mtime FROM file_hashes WHERE path IN ({})",
+                placeholders
+            );
+
+            let mut stmt = conn
+                .prepare(&query)
+                .map_err(|e| format!("Failed to prepare file hash query: {}", e))?;
+
+            let rows = stmt
+                .query_map(params_from_iter(chunk.iter()), |row| {
+                    Ok(FileHashRecord {
+                        path: row.get(0)?,
+                        hash: row.get(1)?,
+                        size: row.get(2)?,
+                        mtime: row.get(3)?,
+                    })
+                })
+                .map_err(|e| format!("Failed to query file hashes: {}", e))?;
+
+            for row in rows {
+                let record = row.map_err(|e| format!("Row error: {}", e))?;
+                hashes.insert(record.path.clone(), record);
+            }
+        }
+
+        Ok(hashes)
+    }
+
+    pub fn remove_stale_file_hashes(&self, root: &str, existing_paths: &HashSet<String>) -> Result<usize, String> {
+        let conn = self.conn.lock().unwrap();
+        let like_pattern = format!("{}/%", root.trim_end_matches('/'));
+        let mut stmt = conn
+            .prepare("SELECT path FROM file_hashes WHERE path = ?1 OR path LIKE ?2")
+            .map_err(|e| format!("Failed to prepare stale hash query: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![root, like_pattern], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Failed to query stale hashes: {}", e))?;
+
+        let mut stale_paths = Vec::new();
+        for row in rows {
+            let path = row.map_err(|e| format!("Row error: {}", e))?;
+            if !existing_paths.contains(&path) {
+                stale_paths.push(path);
+            }
+        }
+
+        for path in &stale_paths {
+            conn.execute("DELETE FROM file_hashes WHERE path = ?1", params![path])
+                .map_err(|e| format!("Failed to remove stale file hash: {}", e))?;
+        }
+
+        Ok(stale_paths.len())
     }
 
     pub fn clear_file_hashes(&self) -> Result<(), String> {

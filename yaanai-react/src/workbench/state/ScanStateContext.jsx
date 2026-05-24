@@ -16,9 +16,10 @@
  * Only ScanController can trigger scans. Tools are read-only consumers.
  */
 
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, startTransition } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { setTheme as setAppTheme } from '@tauri-apps/api/app';
 
 // Scan status enum
 export const ScanStatus = Object.freeze({
@@ -30,6 +31,28 @@ export const ScanStatus = Object.freeze({
 });
 
 const ScanStateContext = createContext();
+
+const STORAGE_KEYS = {
+    currentPath: 'yaanai.currentPath',
+    activeTab: 'yaanai.activeTab',
+    themeMode: 'yaanai.themeMode',
+};
+
+function readStoredValue(key, fallbackValue) {
+    try {
+        return window.localStorage.getItem(key) ?? fallbackValue;
+    } catch {
+        return fallbackValue;
+    }
+}
+
+function writeStoredValue(key, value) {
+    try {
+        window.localStorage.setItem(key, value);
+    } catch {
+        // Ignore storage errors in private/locked-down environments.
+    }
+}
 
 export const useScanState = () => {
     const ctx = useContext(ScanStateContext);
@@ -106,7 +129,7 @@ function timeAgo(date) {
 export const ScanStateProvider = ({ children }) => {
     // --- Core state machine ---
     const [status, setStatus] = useState(ScanStatus.IDLE);
-    const [currentPath, setCurrentPath] = useState('');
+    const [currentPath, setCurrentPath] = useState(() => readStoredValue(STORAGE_KEYS.currentPath, ''));
     const [currentSnapshot, setCurrentSnapshot] = useState(null);
     const [previousSnapshot, setPreviousSnapshot] = useState(null);
     const [snapshotHistory, setSnapshotHistory] = useState([]);
@@ -120,6 +143,17 @@ export const ScanStateProvider = ({ children }) => {
     const [favorites, setFavorites] = useState([]);
     const [ignorePatterns, setIgnorePatterns] = useState([]);
 
+    // --- Workbench preferences ---
+    const [activeTab, setActiveTabState] = useState(() => readStoredValue(STORAGE_KEYS.activeTab, 'overview'));
+    const [themeMode, setThemeModeState] = useState(() => {
+        const storedTheme = readStoredValue(STORAGE_KEYS.themeMode, '');
+        if (storedTheme === 'light' || storedTheme === 'dark') {
+            return storedTheme;
+        }
+        return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    });
+    const [staleStatus, setStaleStatus] = useState({ stale: false, changedPath: null });
+
     // --- Time tracking ---
     const [, setTick] = useState(0);
 
@@ -132,17 +166,38 @@ export const ScanStateProvider = ({ children }) => {
     // Initialize
     useEffect(() => {
         const init = async () => {
-            try {
-                const homeDir = await invoke("get_home_directory");
-                setCurrentPath(homeDir);
-            } catch (e) {
-                setCurrentPath("/");
+            if (!currentPath) {
+                try {
+                    const homeDir = await invoke("get_home_directory");
+                    setCurrentPath(homeDir);
+                } catch (e) {
+                    setCurrentPath("/");
+                }
             }
             try { setFavorites(await invoke("get_favorites")); } catch (e) { /* ignore */ }
             try { setIgnorePatterns(await invoke("get_ignore_patterns")); } catch (e) { /* ignore */ }
         };
         init();
     }, []);
+
+    useEffect(() => {
+        if (currentPath) {
+            writeStoredValue(STORAGE_KEYS.currentPath, currentPath);
+        }
+    }, [currentPath]);
+
+    useEffect(() => {
+        writeStoredValue(STORAGE_KEYS.activeTab, activeTab);
+    }, [activeTab]);
+
+    useEffect(() => {
+        writeStoredValue(STORAGE_KEYS.themeMode, themeMode);
+        document.documentElement.dataset.theme = themeMode;
+        document.body.dataset.theme = themeMode;
+        setAppTheme(themeMode).catch(() => {
+            // Ignore native theme update failures; CSS theme still applies.
+        });
+    }, [themeMode]);
 
     // Listen for tree build progress
     useEffect(() => {
@@ -158,12 +213,54 @@ export const ScanStateProvider = ({ children }) => {
         return () => { unlisten.then(f => f()); };
     }, []);
 
+    useEffect(() => {
+        if (!currentSnapshot?.path || !currentSnapshot?.scannedAt) {
+            setStaleStatus({ stale: false, changedPath: null });
+            return undefined;
+        }
+
+        let cancelled = false;
+        const sinceUnixSecs = Math.floor(new Date(currentSnapshot.scannedAt).getTime() / 1000);
+
+        const checkForChanges = async () => {
+            try {
+                const result = await invoke('check_path_stale', {
+                    path: currentSnapshot.path,
+                    sinceUnixSecs,
+                });
+                if (!cancelled) {
+                    setStaleStatus({
+                        stale: Boolean(result?.stale),
+                        changedPath: result?.changed_path || null,
+                    });
+                }
+            } catch {
+                if (!cancelled) {
+                    setStaleStatus({ stale: false, changedPath: null });
+                }
+            }
+        };
+
+        checkForChanges();
+        const interval = setInterval(checkForChanges, 20000);
+        const handleFocus = () => checkForChanges();
+        window.addEventListener('focus', handleFocus);
+
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+            window.removeEventListener('focus', handleFocus);
+        };
+    }, [currentSnapshot?.path, currentSnapshot?.scannedAt]);
+
     // ========================
     // SCAN — the only way to build state
     // ========================
     const startScan = useCallback(async (path) => {
         const scanPath = path || currentPath;
         if (!scanPath) return;
+        setCurrentPath(scanPath);
+        setStaleStatus({ stale: false, changedPath: null });
 
         // Transition state
         if (currentSnapshot) {
@@ -184,15 +281,17 @@ export const ScanStateProvider = ({ children }) => {
             const snapshot = buildSnapshot(newVersion, scanPath, tree, errors);
 
             // Atomic swap: old current → previous, new → current
-            if (currentSnapshot) {
-                setPreviousSnapshot(currentSnapshot);
-            }
-            setCurrentSnapshot(snapshot);
+            startTransition(() => {
+                if (currentSnapshot) {
+                    setPreviousSnapshot(currentSnapshot);
+                }
+                setCurrentSnapshot(snapshot);
 
-            // Keep history (max 10)
-            setSnapshotHistory(prev => {
-                const next = [snapshot, ...prev].slice(0, 10);
-                return next;
+                // Keep history (max 10)
+                setSnapshotHistory(prev => {
+                    const next = [snapshot, ...prev].slice(0, 10);
+                    return next;
+                });
             });
 
             setStatus(ScanStatus.READY);
@@ -224,6 +323,14 @@ export const ScanStateProvider = ({ children }) => {
         setCurrentPath(snapshot.path);
         setStatus(ScanStatus.READY);
     }, [currentSnapshot]);
+
+    const setActiveTab = useCallback((tabId) => {
+        setActiveTabState(tabId);
+    }, []);
+
+    const setThemeMode = useCallback((nextTheme) => {
+        setThemeModeState(nextTheme);
+    }, []);
 
     // ========================
     // FAVORITES
@@ -293,6 +400,13 @@ export const ScanStateProvider = ({ children }) => {
         // Progress
         scanProgress,
         scanProgressText,
+
+        // Workbench preferences
+        activeTab,
+        setActiveTab,
+        themeMode,
+        setThemeMode,
+        staleStatus,
 
         // Favorites
         favorites,
