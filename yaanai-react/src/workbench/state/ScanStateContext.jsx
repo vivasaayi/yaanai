@@ -20,6 +20,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { setTheme as setAppTheme } from '@tauri-apps/api/app';
+import { computeTreeStats, formatBytes } from '../utils/treeAnalysis';
 
 // Scan status enum
 export const ScanStatus = Object.freeze({
@@ -87,33 +88,6 @@ function buildSnapshot(version, path, tree, errors) {
         totalSizeH: formatBytes(stats.totalSize),
         errors: errors || [],
     };
-}
-
-function computeTreeStats(tree) {
-    if (!tree) return { fileCount: 0, dirCount: 0, totalSize: 0 };
-
-    let fileCount = 0;
-    let dirCount = 0;
-
-    function walk(node) {
-        if (!node) return;
-        if (node.node_type === 'file') fileCount++;
-        else if (node.node_type === 'directory') dirCount++;
-        if (node.children) {
-            node.children.forEach(walk);
-        }
-    }
-
-    walk(tree);
-    const totalSize = tree.disk_entry?.size || 0;
-    return { fileCount, dirCount, totalSize };
-}
-
-function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
 }
 
 function timeAgo(date) {

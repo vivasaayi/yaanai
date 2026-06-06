@@ -34,7 +34,6 @@ export default function ScanController() {
     } = useScanState();
 
     const [pathInput, setPathInput] = useState('');
-    const displayPath = pathInput || currentPath;
 
     // Sync input when external navigation happens
     React.useEffect(() => {

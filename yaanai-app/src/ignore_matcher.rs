@@ -1,6 +1,7 @@
 use std::path::Path;
 
 /// Gitignore-style pattern matcher for excluding directories/files from scans.
+#[derive(Debug, Clone)]
 pub struct IgnoreMatcher {
     patterns: Vec<String>,
 }
@@ -31,7 +32,9 @@ impl IgnoreMatcher {
                     return true;
                 }
                 // Also check if the path ends with the pattern as a component
-                if path.ends_with(&format!("/{}", pattern)) || path.ends_with(&format!("\\{}", pattern)) {
+                if path.ends_with(&format!("/{}", pattern))
+                    || path.ends_with(&format!("\\{}", pattern))
+                {
                     return true;
                 }
             }
@@ -103,10 +106,7 @@ mod tests {
 
     #[test]
     fn test_should_ignore_simple_names() {
-        let matcher = IgnoreMatcher::new(vec![
-            "node_modules".to_string(),
-            ".git".to_string(),
-        ]);
+        let matcher = IgnoreMatcher::new(vec!["node_modules".to_string(), ".git".to_string()]);
         assert!(matcher.should_ignore("/project/node_modules"));
         assert!(matcher.should_ignore("/project/.git"));
         assert!(!matcher.should_ignore("/project/src"));
@@ -114,10 +114,8 @@ mod tests {
 
     #[test]
     fn test_should_ignore_path_patterns() {
-        let matcher = IgnoreMatcher::new(vec![
-            "target/debug".to_string(),
-            "bin/Release".to_string(),
-        ]);
+        let matcher =
+            IgnoreMatcher::new(vec!["target/debug".to_string(), "bin/Release".to_string()]);
         assert!(matcher.should_ignore("/project/target/debug"));
         assert!(matcher.should_ignore("/project/bin/Release"));
         assert!(!matcher.should_ignore("/project/src/debug"));
@@ -125,10 +123,7 @@ mod tests {
 
     #[test]
     fn test_should_ignore_glob_patterns() {
-        let matcher = IgnoreMatcher::new(vec![
-            "*.tmp".to_string(),
-            "*.log".to_string(),
-        ]);
+        let matcher = IgnoreMatcher::new(vec!["*.tmp".to_string(), "*.log".to_string()]);
         assert!(matcher.should_ignore("/project/file.tmp"));
         assert!(matcher.should_ignore("/project/server.log"));
         assert!(!matcher.should_ignore("/project/file.rs"));

@@ -1,23 +1,26 @@
-use std::fs::{DirEntry, ReadDir};
-use serde::{Deserialize, Serialize};
-use crate::types::DiskEntry;
 use crate::ignore_matcher::IgnoreMatcher;
+use crate::types::DiskEntry;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::{DirEntry, ReadDir};
+use std::path::Path;
 use tokio::sync::mpsc;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
 pub enum NodeType {
     Empty, // Not Initialized
     Directory,
-    File
+    File,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
 pub enum FileType {
     Empty, // Not Initialized or default
     JPEG,
     Text,
-    JavaScript
+    JavaScript,
 }
 
 // Progress updates during tree building
@@ -142,14 +145,22 @@ impl<'a> TreeBuilderState<'a> {
     fn build_tree(&mut self, name: &str) {
         let mut tree_node = TreeNode::new();
         tree_node.node_type = NodeType::Directory;
+        tree_node.disk_entry = root_disk_entry(name);
         self.recursively_build_file_tree(name, &mut tree_node);
+        tree_node.disk_entry.calculate_human_size();
         self.root_node = tree_node;
     }
 
-    fn build_tree_with_progress(&mut self, name: &str, progress_tx: Option<mpsc::Sender<TreeBuildProgress>>) {
+    fn build_tree_with_progress(
+        &mut self,
+        name: &str,
+        progress_tx: Option<mpsc::Sender<TreeBuildProgress>>,
+    ) {
         let mut tree_node = TreeNode::new();
         tree_node.node_type = NodeType::Directory;
+        tree_node.disk_entry = root_disk_entry(name);
         self.recursively_build_file_tree_impl(name, &mut tree_node, &progress_tx);
+        tree_node.disk_entry.calculate_human_size();
         self.root_node = tree_node;
     }
 
@@ -173,7 +184,8 @@ impl<'a> TreeBuilderState<'a> {
         let dirs = match dirs {
             Ok(d) => d,
             Err(error) => {
-                self.tree_builder_errors.push(format!("Error reading directory {}: {}", name, error));
+                self.tree_builder_errors
+                    .push(format!("Error reading directory {}: {}", name, error));
                 return;
             }
         };
@@ -182,7 +194,8 @@ impl<'a> TreeBuilderState<'a> {
             let dir_entry: DirEntry = match entry_result {
                 Ok(e) => e,
                 Err(e) => {
-                    self.tree_builder_errors.push(format!("Entry error in {}: {}", name, e));
+                    self.tree_builder_errors
+                        .push(format!("Entry error in {}: {}", name, e));
                     continue;
                 }
             };
@@ -195,7 +208,10 @@ impl<'a> TreeBuilderState<'a> {
             let metadata = match dir_entry.metadata() {
                 Ok(m) => m,
                 Err(error) => {
-                    self.tree_builder_errors.push(format!("Metadata error for {}/{}: {}", name, dir_path, error));
+                    self.tree_builder_errors.push(format!(
+                        "Metadata error for {}/{}: {}",
+                        name, dir_path, error
+                    ));
                     continue; // Continue instead of returning
                 }
             };
@@ -209,7 +225,11 @@ impl<'a> TreeBuilderState<'a> {
 
                 let child_dir_path = format!("{}/{}", name, dir_path);
 
-                self.recursively_build_file_tree_impl(&child_dir_path, &mut child_tree_node, progress_tx);
+                self.recursively_build_file_tree_impl(
+                    &child_dir_path,
+                    &mut child_tree_node,
+                    progress_tx,
+                );
                 parent_node.disk_entry.size += child_tree_node.disk_entry.size;
             } else if metadata.is_file() {
                 self.files_processed += 1;
@@ -229,22 +249,30 @@ impl<'a> TreeBuilderState<'a> {
             parent_node.children.push(child_tree_node);
 
             // Send progress update every 50 items
-            if progress_tx.is_some() && (self.files_processed + self.directories_processed) % 50 == 0 {
+            if progress_tx.is_some()
+                && (self.files_processed + self.directories_processed) % 50 == 0
+            {
                 if let Some(ref tx) = progress_tx {
-                    let errors = self.tree_builder_errors.iter().map(|err_msg| {
-                        let error_type = if err_msg.contains("Operation not permitted") || err_msg.contains("Permission denied") {
-                            "permission_denied".to_string()
-                        } else if err_msg.contains("No such file") {
-                            "not_found".to_string()
-                        } else {
-                            "other".to_string()
-                        };
-                        ScanError {
-                            path: name.to_string(),
-                            error_message: err_msg.clone(),
-                            error_type,
-                        }
-                    }).collect();
+                    let errors = self
+                        .tree_builder_errors
+                        .iter()
+                        .map(|err_msg| {
+                            let error_type = if err_msg.contains("Operation not permitted")
+                                || err_msg.contains("Permission denied")
+                            {
+                                "permission_denied".to_string()
+                            } else if err_msg.contains("No such file") {
+                                "not_found".to_string()
+                            } else {
+                                "other".to_string()
+                            };
+                            ScanError {
+                                path: name.to_string(),
+                                error_message: err_msg.clone(),
+                                error_type,
+                            }
+                        })
+                        .collect();
 
                     let _ = tx.try_send(TreeBuildProgress {
                         current_path: name.to_string(),
@@ -257,5 +285,33 @@ impl<'a> TreeBuilderState<'a> {
                 }
             }
         }
+    }
+}
+
+fn root_disk_entry(path_name: &str) -> DiskEntry {
+    let path = Path::new(path_name);
+    let normalized_path = path.to_string_lossy().to_string();
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| normalized_path.clone());
+
+    let metadata = std::fs::metadata(path).ok();
+    let is_file = metadata.as_ref().map(|m| m.is_file()).unwrap_or(false);
+    let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(true);
+    let size = if is_file {
+        metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+
+    DiskEntry {
+        name,
+        path: normalized_path,
+        size,
+        size_h: bytesize::ByteSize::b(size).to_string(),
+        is_dir,
+        is_file,
     }
 }

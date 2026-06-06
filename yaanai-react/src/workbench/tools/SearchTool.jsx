@@ -1,26 +1,19 @@
 /**
  * SearchTool — Search files using regex, glob, or substring patterns.
  *
- * Calls backend search_files command (works independently of scan state).
- * Uses currentPath from scan state for the search root.
+ * Searches the current central scan snapshot instead of walking the filesystem.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { invoke } from "@tauri-apps/api/core";
 import { useScanState } from '../state/ScanStateContext';
 import { CButton, CBadge, CFormCheck } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
 import { cilFile, cilFolder, cilSearch, cilTrash } from '@coreui/icons';
-
-function formatBytes(bytes) {
-    if (!bytes || bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
-}
+import { searchTree } from '../utils/treeAnalysis';
 
 export default function SearchTool() {
-    const { currentPath } = useScanState();
+    const { currentSnapshot, hasData } = useScanState();
 
     const [pattern, setPattern] = useState('');
     const [extensions, setExtensions] = useState('');
@@ -32,8 +25,13 @@ export default function SearchTool() {
     const [selectedPaths, setSelectedPaths] = useState(new Set());
     const [deleting, setDeleting] = useState(false);
 
+    useEffect(() => {
+        setResults(null);
+        setSelectedPaths(new Set());
+    }, [currentSnapshot?.version]);
+
     async function handleSearch() {
-        if (!pattern.trim() || !currentPath) return;
+        if (!pattern.trim() || !currentSnapshot?.tree) return;
         setSearching(true);
         setResults(null);
         setSelectedPaths(new Set());
@@ -44,8 +42,7 @@ export default function SearchTool() {
             const minSize = minSizeMB ? Math.floor(parseFloat(minSizeMB) * 1024 * 1024) : null;
             const maxSize = maxSizeMB ? Math.floor(parseFloat(maxSizeMB) * 1024 * 1024) : null;
 
-            const result = await invoke("search_files", {
-                folderName: currentPath,
+            const result = searchTree(currentSnapshot.tree, {
                 pattern: pattern.trim(),
                 recursive,
                 extensions: extList,
@@ -75,9 +72,17 @@ export default function SearchTool() {
                 paths: Array.from(selectedPaths),
                 useTrash: true,
             });
+            const deleted = new Set(selectedPaths);
             setSelectedPaths(new Set());
-            // Re-search
-            await handleSearch();
+            setResults((prev) => {
+                if (!prev) return prev;
+                const nextResults = prev.results.filter((item) => !deleted.has(item.path));
+                return {
+                    ...prev,
+                    results: nextResults,
+                    total_matches: nextResults.length,
+                };
+            });
         } catch (e) {
             console.error("Delete failed:", e);
         }
@@ -100,7 +105,7 @@ export default function SearchTool() {
                             style={{ fontFamily: 'monospace' }}
                         />
                     </div>
-                    <CButton onClick={handleSearch} color="primary" size="sm" disabled={searching || !pattern.trim()}>
+                    <CButton onClick={handleSearch} color="primary" size="sm" disabled={searching || !pattern.trim() || !hasData}>
                         {searching ? (
                             <><span className="spinner-border spinner-border-sm me-1" /> Searching...</>
                         ) : (
@@ -208,7 +213,7 @@ export default function SearchTool() {
                 <div className="text-center text-muted py-4">
                     <CIcon icon={cilSearch} size="3xl" className="mb-3 text-muted" />
                     <h6>File Search</h6>
-                    <p>Enter a search pattern to find files by name, path, extension, or size.</p>
+                    <p>{hasData ? 'Enter a search pattern to query the current scan snapshot.' : 'Scan a directory before searching.'}</p>
                     <div className="small text-muted mt-2">
                         Supports: <code>*.log</code> (glob), <code>test.*</code> (regex), <code>readme</code> (substring)
                     </div>

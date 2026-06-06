@@ -5,20 +5,21 @@
 
 extern crate yaanaiapp;
 
+use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use std::{fs, path::Path};
-use serde::Serialize;
 use tauri::Emitter;
 use yaanaiapp::db::Database;
-use yaanaiapp::file_manager::FileManager;
-use yaanaiapp::types::DiskEntry;
-use yaanaiapp::ignore_matcher::IgnoreMatcher;
 use yaanaiapp::duplicate_detector;
-use yaanaiapp::searcher;
-use yaanaiapp::file_operations;
 use yaanaiapp::exporter;
+use yaanaiapp::file_manager::FileManager;
+use yaanaiapp::file_operations;
+use yaanaiapp::ignore_matcher::IgnoreMatcher;
+use yaanaiapp::recursive_tree_builder::{NodeType, TreeBuildProgress, TreeNode};
+use yaanaiapp::searcher;
+use yaanaiapp::types::DiskEntry;
 
 // --- App State ---
 
@@ -71,25 +72,70 @@ async fn analyze_disk_usage(
     folder_name: &str,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<DiskEntry>, String> {
-    state.file_manager.analyze_disk_usage_async(folder_name.to_string()).await
+    state
+        .file_manager
+        .analyze_disk_usage_async(folder_name.to_string())
+        .await
 }
 
 #[tauri::command]
 async fn get_file_tree(
     folder_name: &str,
     state: tauri::State<'_, AppState>,
-) -> Result<yaanaiapp::recursive_tree_builder::TreeNode, String> {
-    state.file_manager.get_file_tree_async(folder_name.to_string()).await
+) -> Result<TreeNode, String> {
+    let ignore_matcher = state.get_ignore_matcher();
+    state
+        .file_manager
+        .get_file_tree_with_ignore_async(folder_name.to_string(), ignore_matcher)
+        .await
 }
 
 #[tauri::command]
 async fn get_file_tree_with_progress(
     folder_name: &str,
-    _window: tauri::Window,
+    window: tauri::Window,
     state: tauri::State<'_, AppState>,
-) -> Result<yaanaiapp::recursive_tree_builder::TreeNode, String> {
-    // Build tree (progress events will be re-enabled with Tauri 2.x event refactor)
-    state.file_manager.get_file_tree_async(folder_name.to_string()).await
+) -> Result<TreeNode, String> {
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<TreeBuildProgress>(64);
+    let progress_window = window.clone();
+
+    tauri::async_runtime::spawn(async move {
+        while let Some(progress) = progress_rx.recv().await {
+            let _ = progress_window.emit("tree-build-progress", &progress);
+        }
+    });
+
+    let ignore_matcher = state.get_ignore_matcher();
+    let tree = state
+        .file_manager
+        .get_file_tree_with_progress_and_ignore_async(
+            folder_name.to_string(),
+            progress_tx,
+            ignore_matcher,
+        )
+        .await?;
+
+    let (file_count, dir_count, total_size) = summarize_tree(&tree);
+    let _ = state.db.save_scan_record(
+        folder_name,
+        file_count.min(i64::MAX as u64) as i64,
+        dir_count.min(i64::MAX as u64) as i64,
+        total_size.min(i64::MAX as u64) as i64,
+    );
+
+    let _ = window.emit(
+        "tree-build-progress",
+        &TreeBuildProgress {
+            current_path: folder_name.to_string(),
+            files_processed: file_count,
+            directories_processed: dir_count,
+            total_size_bytes: total_size,
+            partial_tree: None,
+            errors: Vec::new(),
+        },
+    );
+
+    Ok(tree)
 }
 
 #[tauri::command]
@@ -97,7 +143,11 @@ async fn get_files_map(
     folder_name: &str,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<yaanaiapp::recursive_tree_builder::TreeNode>, String> {
-    state.file_manager.get_file_tree_async(folder_name.to_string()).await?;
+    let ignore_matcher = state.get_ignore_matcher();
+    state
+        .file_manager
+        .get_file_tree_with_ignore_async(folder_name.to_string(), ignore_matcher)
+        .await?;
     state.file_manager.get_duplicates_async().await
 }
 
@@ -105,6 +155,25 @@ async fn get_files_map(
 fn get_home_directory() -> String {
     std::env::var("HOME")
         .unwrap_or_else(|_| std::env::var("USERPROFILE").unwrap_or_else(|_| "/".to_string()))
+}
+
+fn summarize_tree(tree: &TreeNode) -> (u64, u64, u64) {
+    fn walk(node: &TreeNode, files: &mut u64, dirs: &mut u64) {
+        match &node.node_type {
+            NodeType::File => *files += 1,
+            NodeType::Directory => *dirs += 1,
+            NodeType::Empty => {}
+        }
+
+        for child in &node.children {
+            walk(child, files, dirs);
+        }
+    }
+
+    let mut files = 0;
+    let mut dirs = 0;
+    walk(tree, &mut files, &mut dirs);
+    (files, dirs, tree.disk_entry.size)
 }
 
 // --- Duplicate Detection ---
@@ -122,11 +191,12 @@ async fn find_true_duplicates(
     cancel_flag.store(false, Ordering::Relaxed);
 
     tokio::task::spawn_blocking(move || {
-        let progress_cb = std::sync::Arc::new(std::sync::Mutex::new(
-            Box::new(move |progress: duplicate_detector::DuplicateScanProgress| {
+        let progress_cb = std::sync::Arc::new(std::sync::Mutex::new(Box::new(
+            move |progress: duplicate_detector::DuplicateScanProgress| {
                 let _ = window.emit("duplicate-progress", &progress);
-            }) as Box<dyn Fn(duplicate_detector::DuplicateScanProgress) + Send>,
-        ));
+            },
+        )
+            as Box<dyn Fn(duplicate_detector::DuplicateScanProgress) + Send>));
 
         duplicate_detector::find_duplicates_with_progress(
             &folder,
@@ -141,10 +211,39 @@ async fn find_true_duplicates(
 }
 
 #[tauri::command]
-fn cancel_duplicate_scan(
+async fn find_true_duplicates_for_files(
+    files: Vec<duplicate_detector::DuplicateCandidateInput>,
+    window: tauri::Window,
     state: tauri::State<'_, AppState>,
-) {
-    state.duplicate_scan_cancelled.store(true, Ordering::Relaxed);
+) -> Result<duplicate_detector::DuplicateScanResult, String> {
+    let db = state.db.clone();
+    let cancel_flag = state.duplicate_scan_cancelled.clone();
+    cancel_flag.store(false, Ordering::Relaxed);
+
+    tokio::task::spawn_blocking(move || {
+        let progress_cb = std::sync::Arc::new(std::sync::Mutex::new(Box::new(
+            move |progress: duplicate_detector::DuplicateScanProgress| {
+                let _ = window.emit("duplicate-progress", &progress);
+            },
+        )
+            as Box<dyn Fn(duplicate_detector::DuplicateScanProgress) + Send>));
+
+        duplicate_detector::find_duplicates_from_candidates_with_progress(
+            files,
+            Some(progress_cb),
+            Some(db),
+            Some(cancel_flag),
+        )
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+fn cancel_duplicate_scan(state: tauri::State<'_, AppState>) {
+    state
+        .duplicate_scan_cancelled
+        .store(true, Ordering::Relaxed);
 }
 
 // --- File Search ---
@@ -211,7 +310,11 @@ async fn export_report(
 ) -> Result<String, String> {
     let content = match report_type.as_str() {
         "tree" => {
-            let tree = state.file_manager.get_file_tree_async(folder_name).await?;
+            let ignore_matcher = state.get_ignore_matcher();
+            let tree = state
+                .file_manager
+                .get_file_tree_with_ignore_async(folder_name, ignore_matcher)
+                .await?;
             match format.as_str() {
                 "json" => exporter::export_tree_json(&tree)?,
                 "csv" => exporter::export_tree_csv(&tree)?,
@@ -234,14 +337,53 @@ async fn export_report(
             }
         }
         "disk_usage" => {
-            let entries = state.file_manager.analyze_disk_usage_async(folder_name).await?;
+            let entries = state
+                .file_manager
+                .analyze_disk_usage_async(folder_name)
+                .await?;
             match format.as_str() {
                 "json" => exporter::export_disk_usage_json(&entries)?,
                 "csv" => exporter::export_disk_usage_csv(&entries)?,
                 _ => return Err("Unsupported format. Use 'json' or 'csv'.".to_string()),
             }
         }
-        _ => return Err("Unsupported report type. Use 'tree', 'duplicates', or 'disk_usage'.".to_string()),
+        _ => {
+            return Err(
+                "Unsupported report type. Use 'tree', 'duplicates', or 'disk_usage'.".to_string(),
+            )
+        }
+    };
+
+    exporter::write_export_to_file(&file_path, &content)?;
+    Ok(file_path)
+}
+
+#[tauri::command]
+fn export_duplicate_result(
+    format: String,
+    file_path: String,
+    result: duplicate_detector::DuplicateScanResult,
+) -> Result<String, String> {
+    let content = match format.as_str() {
+        "json" => exporter::export_duplicates_json(&result)?,
+        "csv" => exporter::export_duplicates_csv(&result)?,
+        _ => return Err("Unsupported format. Use 'json' or 'csv'.".to_string()),
+    };
+
+    exporter::write_export_to_file(&file_path, &content)?;
+    Ok(file_path)
+}
+
+#[tauri::command]
+fn export_tree_snapshot(
+    format: String,
+    file_path: String,
+    tree: TreeNode,
+) -> Result<String, String> {
+    let content = match format.as_str() {
+        "json" => exporter::export_tree_json(&tree)?,
+        "csv" => exporter::export_tree_csv(&tree)?,
+        _ => return Err("Unsupported format. Use 'json' or 'csv'.".to_string()),
     };
 
     exporter::write_export_to_file(&file_path, &content)?;
@@ -267,10 +409,7 @@ fn get_favorites(
 }
 
 #[tauri::command]
-fn remove_favorite(
-    path: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+fn remove_favorite(path: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     state.db.remove_favorite(&path)
 }
 
@@ -292,19 +431,14 @@ fn get_ignore_patterns(
 }
 
 #[tauri::command]
-fn remove_ignore_pattern(
-    pattern: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+fn remove_ignore_pattern(pattern: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     state.db.remove_ignore_pattern(&pattern)
 }
 
 // --- Database Stats ---
 
 #[tauri::command]
-fn get_db_stats(
-    state: tauri::State<'_, AppState>,
-) -> Result<yaanaiapp::db::DbStats, String> {
+fn get_db_stats(state: tauri::State<'_, AppState>) -> Result<yaanaiapp::db::DbStats, String> {
     state.db.get_stats()
 }
 
@@ -356,8 +490,11 @@ fn detect_stale_path(
             .map_err(|e| format!("Failed to read directory {}: {}", path.display(), e))?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| format!("Directory entry error in {}: {}", path.display(), e))?;
-            if let Some(changed_path) = detect_stale_path(&entry.path(), since_unix_secs, ignore_matcher)? {
+            let entry =
+                entry.map_err(|e| format!("Directory entry error in {}: {}", path.display(), e))?;
+            if let Some(changed_path) =
+                detect_stale_path(&entry.path(), since_unix_secs, ignore_matcher)?
+            {
                 return Ok(Some(changed_path));
             }
         }
@@ -385,6 +522,7 @@ fn main() {
             get_home_directory,
             // Duplicate detection
             find_true_duplicates,
+            find_true_duplicates_for_files,
             cancel_duplicate_scan,
             // File search
             search_files,
@@ -393,6 +531,8 @@ fn main() {
             get_files_info,
             // Export
             export_report,
+            export_duplicate_result,
+            export_tree_snapshot,
             // Favorites
             add_favorite,
             get_favorites,

@@ -1,5 +1,6 @@
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
@@ -7,7 +8,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, UNIX_EPOCH};
-use rayon::prelude::*;
 
 use crate::db::Database;
 use crate::ignore_matcher::IgnoreMatcher;
@@ -28,6 +28,13 @@ pub struct DuplicateFile {
     pub name: String,
     pub size: u64,
     pub size_h: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateCandidateInput {
+    pub path: String,
+    pub name: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,17 +115,131 @@ pub fn find_duplicates_with_progress(
         &cancel_flag,
     );
 
+    process_candidate_groups(
+        files_by_size,
+        Some(folder),
+        total_scanned,
+        errors,
+        started_at,
+        progress_cb,
+        db,
+        cancel_flag,
+    )
+}
+
+/// Find duplicates from an already-built central file-system snapshot.
+///
+/// The snapshot supplies the candidate list, so this path does not walk the
+/// directory tree again. It still checks current metadata before hashing so
+/// stale/deleted files are reported instead of blindly trusting old state.
+pub fn find_duplicates_from_candidates_with_progress(
+    files: Vec<DuplicateCandidateInput>,
+    progress_cb: Option<ProgressCallback>,
+    db: Option<Arc<Database>>,
+    cancel_flag: Option<Arc<AtomicBool>>,
+) -> Result<DuplicateScanResult, String> {
+    let started_at = Instant::now();
+    let mut errors: Vec<String> = Vec::new();
+    let mut files_by_size: HashMap<u64, Vec<CandidateFile>> = HashMap::new();
+    let mut total_scanned: u64 = 0;
+
+    for file in files {
+        if is_cancelled(&cancel_flag) {
+            break;
+        }
+
+        let path = Path::new(&file.path);
+        let metadata = match fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                errors.push(format!("Metadata error for {}: {}", file.path, e));
+                continue;
+            }
+        };
+
+        if !metadata.is_file() || metadata.len() == 0 {
+            continue;
+        }
+
+        total_scanned += 1;
+        let path_str = path.to_string_lossy().to_string();
+        let name = if file.name.is_empty() {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| path_str.clone())
+        } else {
+            file.name
+        };
+        let mtime = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs() as i64)
+            .unwrap_or_default();
+
+        files_by_size
+            .entry(metadata.len())
+            .or_insert_with(Vec::new)
+            .push(CandidateFile {
+                path: path_str.clone(),
+                name,
+                size: metadata.len(),
+                mtime,
+            });
+
+        if total_scanned % 64 == 0 {
+            emit_progress(
+                &progress_cb,
+                DuplicateScanProgress {
+                    phase: "scanning".to_string(),
+                    current_file: path_str,
+                    files_processed: total_scanned,
+                    total_candidates: 0,
+                    groups_found: 0,
+                    files_hashed: 0,
+                    cached_hashes_reused: 0,
+                    cancelled: false,
+                },
+            );
+        }
+    }
+
+    process_candidate_groups(
+        files_by_size,
+        None,
+        total_scanned,
+        errors,
+        started_at,
+        progress_cb,
+        db,
+        cancel_flag,
+    )
+}
+
+fn process_candidate_groups(
+    files_by_size: HashMap<u64, Vec<CandidateFile>>,
+    stale_root: Option<&str>,
+    total_scanned: u64,
+    mut errors: Vec<String>,
+    started_at: Instant,
+    progress_cb: Option<ProgressCallback>,
+    db: Option<Arc<Database>>,
+    cancel_flag: Option<Arc<AtomicBool>>,
+) -> Result<DuplicateScanResult, String> {
     if is_cancelled(&cancel_flag) {
-        emit_progress(&progress_cb, DuplicateScanProgress {
-            phase: "cancelled".to_string(),
-            current_file: String::new(),
-            files_processed: total_scanned,
-            total_candidates: 0,
-            groups_found: 0,
-            files_hashed: 0,
-            cached_hashes_reused: 0,
-            cancelled: true,
-        });
+        emit_progress(
+            &progress_cb,
+            DuplicateScanProgress {
+                phase: "cancelled".to_string(),
+                current_file: String::new(),
+                files_processed: total_scanned,
+                total_candidates: 0,
+                groups_found: 0,
+                files_hashed: 0,
+                cached_hashes_reused: 0,
+                cancelled: true,
+            },
+        );
 
         return Ok(build_result(
             Vec::new(),
@@ -134,16 +255,19 @@ pub fn find_duplicates_with_progress(
     }
 
     // Report phase 1 progress
-    emit_progress(&progress_cb, DuplicateScanProgress {
-        phase: "grouping".to_string(),
-        current_file: String::new(),
-        files_processed: total_scanned,
-        total_candidates: files_by_size.values().map(|v| v.len()).sum::<usize>() as u64,
-        groups_found: 0,
-        files_hashed: 0,
-        cached_hashes_reused: 0,
-        cancelled: false,
-    });
+    emit_progress(
+        &progress_cb,
+        DuplicateScanProgress {
+            phase: "grouping".to_string(),
+            current_file: String::new(),
+            files_processed: total_scanned,
+            total_candidates: files_by_size.values().map(|v| v.len()).sum::<usize>() as u64,
+            groups_found: 0,
+            files_hashed: 0,
+            cached_hashes_reused: 0,
+            cancelled: false,
+        },
+    );
 
     // Phase 2: Filter to only sizes with multiple files (potential duplicates)
     let candidates: HashMap<u64, Vec<CandidateFile>> = files_by_size
@@ -162,8 +286,8 @@ pub fn find_duplicates_with_progress(
         None => HashMap::new(),
     };
 
-    if let Some(database) = &db {
-        let _ = database.remove_stale_file_hashes(folder, &existing_paths);
+    if let (Some(database), Some(root)) = (&db, stale_root) {
+        let _ = database.remove_stale_file_hashes(root, &existing_paths);
     }
 
     // Phase 3: Hash files within each size group (using parallel hashing)
@@ -195,7 +319,8 @@ pub fn find_duplicates_with_progress(
 
                 let outcome = match cached_hashes_ref.get(&candidate.path) {
                     Some(record)
-                        if record.size == candidate.size as i64 && record.mtime == candidate.mtime =>
+                        if record.size == candidate.size as i64
+                            && record.mtime == candidate.mtime =>
                     {
                         cache_hits_counter.fetch_add(1, Ordering::Relaxed);
                         HashOutcome::Cached(record.hash.clone())
@@ -211,16 +336,19 @@ pub fn find_duplicates_with_progress(
 
                 let processed = files_processed_counter.fetch_add(1, Ordering::Relaxed) + 1;
                 if processed % 8 == 0 || processed == total_candidates {
-                    emit_progress(&progress_cb_for_group, DuplicateScanProgress {
-                        phase: "hashing".to_string(),
-                        current_file: candidate.path.clone(),
-                        files_processed: processed,
-                        total_candidates,
-                        groups_found: duplicate_groups.len() as u64,
-                        files_hashed: files_hashed_counter.load(Ordering::Relaxed),
-                        cached_hashes_reused: cache_hits_counter.load(Ordering::Relaxed),
-                        cancelled: false,
-                    });
+                    emit_progress(
+                        &progress_cb_for_group,
+                        DuplicateScanProgress {
+                            phase: "hashing".to_string(),
+                            current_file: candidate.path.clone(),
+                            files_processed: processed,
+                            total_candidates,
+                            groups_found: duplicate_groups.len() as u64,
+                            files_hashed: files_hashed_counter.load(Ordering::Relaxed),
+                            cached_hashes_reused: cache_hits_counter.load(Ordering::Relaxed),
+                            cancelled: false,
+                        },
+                    );
                 }
 
                 (candidate.clone(), outcome)
@@ -287,16 +415,23 @@ pub fn find_duplicates_with_progress(
             }
         }
 
-        emit_progress(&progress_cb, DuplicateScanProgress {
-            phase: if cancelled { "cancelled".to_string() } else { "hashing".to_string() },
-            current_file: String::new(),
-            files_processed: files_processed.load(Ordering::Relaxed),
-            total_candidates,
-            groups_found: duplicate_groups.len() as u64,
-            files_hashed: files_hashed.load(Ordering::Relaxed),
-            cached_hashes_reused: cached_hashes_reused.load(Ordering::Relaxed),
-            cancelled,
-        });
+        emit_progress(
+            &progress_cb,
+            DuplicateScanProgress {
+                phase: if cancelled {
+                    "cancelled".to_string()
+                } else {
+                    "hashing".to_string()
+                },
+                current_file: String::new(),
+                files_processed: files_processed.load(Ordering::Relaxed),
+                total_candidates,
+                groups_found: duplicate_groups.len() as u64,
+                files_hashed: files_hashed.load(Ordering::Relaxed),
+                cached_hashes_reused: cached_hashes_reused.load(Ordering::Relaxed),
+                cancelled,
+            },
+        );
 
         if cancelled {
             break;
@@ -306,16 +441,23 @@ pub fn find_duplicates_with_progress(
     let cancelled = is_cancelled(&cancel_flag);
 
     // Final progress report
-    emit_progress(&progress_cb, DuplicateScanProgress {
-        phase: if cancelled { "cancelled".to_string() } else { "complete".to_string() },
-        current_file: String::new(),
-        files_processed: files_processed.load(Ordering::Relaxed),
-        total_candidates,
-        groups_found: duplicate_groups.len() as u64,
-        files_hashed: files_hashed.load(Ordering::Relaxed),
-        cached_hashes_reused: cached_hashes_reused.load(Ordering::Relaxed),
-        cancelled,
-    });
+    emit_progress(
+        &progress_cb,
+        DuplicateScanProgress {
+            phase: if cancelled {
+                "cancelled".to_string()
+            } else {
+                "complete".to_string()
+            },
+            current_file: String::new(),
+            files_processed: files_processed.load(Ordering::Relaxed),
+            total_candidates,
+            groups_found: duplicate_groups.len() as u64,
+            files_hashed: files_hashed.load(Ordering::Relaxed),
+            cached_hashes_reused: cached_hashes_reused.load(Ordering::Relaxed),
+            cancelled,
+        },
+    );
 
     // Sort by wasted space descending
     duplicate_groups.sort_by(|a, b| b.wasted_space.cmp(&a.wasted_space));
@@ -412,16 +554,19 @@ fn collect_files_by_size(
                 });
 
             if *total_scanned % 64 == 0 {
-                emit_progress(progress_cb, DuplicateScanProgress {
-                    phase: "scanning".to_string(),
-                    current_file: path_str,
-                    files_processed: *total_scanned,
-                    total_candidates: 0,
-                    groups_found: 0,
-                    files_hashed: 0,
-                    cached_hashes_reused: 0,
-                    cancelled: false,
-                });
+                emit_progress(
+                    progress_cb,
+                    DuplicateScanProgress {
+                        phase: "scanning".to_string(),
+                        current_file: path_str,
+                        files_processed: *total_scanned,
+                        total_candidates: 0,
+                        groups_found: 0,
+                        files_hashed: 0,
+                        cached_hashes_reused: 0,
+                        cancelled: false,
+                    },
+                );
             }
         }
     }
@@ -469,14 +614,14 @@ fn build_result(
 
 /// Hash a file's content using SHA256
 fn hash_file(path: &str) -> Result<String, String> {
-    let mut file = fs::File::open(path)
-        .map_err(|e| format!("Cannot open file: {}", e))?;
+    let mut file = fs::File::open(path).map_err(|e| format!("Cannot open file: {}", e))?;
 
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 65536]; // 64KB buffer for faster reading
 
     loop {
-        let bytes_read = file.read(&mut buffer)
+        let bytes_read = file
+            .read(&mut buffer)
             .map_err(|e| format!("Read error: {}", e))?;
         if bytes_read == 0 {
             break;

@@ -12,13 +12,7 @@ import { useScanState, ScanStatus } from '../state/ScanStateContext';
 import { CButton, CBadge } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
 import { cilFolder, cilFile, cilTrash, cilArrowLeft } from '@coreui/icons';
-
-function formatBytes(bytes) {
-    if (!bytes || bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
-}
+import { formatBytes, isDirectoryNode } from '../utils/treeAnalysis';
 
 // Find a node in the tree by path
 function findNode(tree, path) {
@@ -34,7 +28,7 @@ function findNode(tree, path) {
 }
 
 export default function FileBrowserTool() {
-    const { currentSnapshot, hasData, currentPath } = useScanState();
+    const { currentSnapshot, hasData } = useScanState();
 
     const [browsePath, setBrowsePath] = useState(null);
     const [selectedPaths, setSelectedPaths] = useState(new Set());
@@ -64,8 +58,8 @@ export default function FileBrowserTool() {
     const sortedChildren = useMemo(() => {
         const sorted = [...children].sort((a, b) => {
             // Directories first
-            if (a.node_type === 'directory' && b.node_type !== 'directory') return -1;
-            if (a.node_type !== 'directory' && b.node_type === 'directory') return 1;
+            if (isDirectoryNode(a) && !isDirectoryNode(b)) return -1;
+            if (!isDirectoryNode(a) && isDirectoryNode(b)) return 1;
 
             let cmp = 0;
             switch (sortBy) {
@@ -184,7 +178,7 @@ export default function FileBrowserTool() {
                         {sortedChildren.map((child) => {
                             const path = child.disk_entry?.path;
                             const name = path?.split('/').pop() || '';
-                            const isDir = child.node_type === 'directory';
+                            const isDir = isDirectoryNode(child);
                             const selected = selectedPaths.has(path);
 
                             return (

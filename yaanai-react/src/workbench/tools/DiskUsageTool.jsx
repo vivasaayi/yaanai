@@ -11,16 +11,10 @@ import { useScanState } from '../state/ScanStateContext';
 import { CButton, CCard, CCardBody } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
 import { cilFile, cilFolder } from '@coreui/icons';
-
-function formatBytes(bytes) {
-    if (!bytes || bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
-}
+import { formatBytes, isDirectoryNode } from '../utils/treeAnalysis';
 
 export default function DiskUsageTool() {
-    const { currentSnapshot, hasData, currentPath } = useScanState();
+    const { currentSnapshot, hasData } = useScanState();
     const [vizType, setVizType] = useState('bars');
     const [exporting, setExporting] = useState(false);
 
@@ -36,8 +30,10 @@ export default function DiskUsageTool() {
         try {
             const homeDir = await invoke("get_home_directory");
             const filePath = `${homeDir}/yaanai_disk_usage.${format}`;
-            await invoke("export_report", {
-                format, reportType: 'disk_usage', filePath, folderName: currentPath
+            await invoke("export_tree_snapshot", {
+                format,
+                filePath,
+                tree: currentSnapshot.tree,
             });
             alert(`Exported to: ${filePath}`);
         } catch (e) {
@@ -90,7 +86,7 @@ function BarChart({ items, totalSize }) {
                         const pct = (item.disk_entry.size / maxSize) * 100;
                         const totalPct = (item.disk_entry.size / totalSize) * 100;
                         const name = item.disk_entry.path.split('/').pop();
-                        const isDir = item.node_type === 'directory';
+                        const isDir = isDirectoryNode(item);
                         return (
                             <tr key={i}>
                                 <td>
@@ -141,7 +137,7 @@ function Treemap({ items, totalSize }) {
         <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ border: '1px solid #dee2e6', borderRadius: '4px' }}>
             {packed.map((item, i) => {
                 const pct = (item.disk_entry.size / totalSize) * 100;
-                const isDir = item.node_type === 'directory';
+                const isDir = isDirectoryNode(item);
                 const name = item.disk_entry.path.split('/').pop();
                 const showLabel = item.width > 40 && item.height > 20;
                 return (
@@ -180,7 +176,7 @@ function Sunburst({ items, totalSize }) {
                     const x2 = 250 + 120 * Math.cos(((start + angle) * Math.PI) / 180);
                     const y2 = 250 + 120 * Math.sin(((start + angle) * Math.PI) / 180);
                     const large = angle > 180 ? 1 : 0;
-                    const isDir = item.node_type === 'directory';
+                    const isDir = isDirectoryNode(item);
                     const name = item.disk_entry.path.split('/').pop();
                     return (
                         <g key={i}>

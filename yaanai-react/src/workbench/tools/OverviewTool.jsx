@@ -10,13 +10,7 @@ import { useScanState, ScanStatus } from '../state/ScanStateContext';
 import { CCard, CCardBody, CRow, CCol, CButton } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
 import { cilFile, cilFolder, cilStorage, cilCopy, cilSearch, cilChartPie } from '@coreui/icons';
-
-function formatBytes(bytes) {
-    if (!bytes || bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
-}
+import { formatBytes, isDirectoryNode, isFileNode } from '../utils/treeAnalysis';
 
 export default function OverviewTool() {
     const { status, currentSnapshot, hasData, startScan, currentPath, scannedTimeAgo, favorites } = useScanState();
@@ -78,11 +72,11 @@ export default function OverviewTool() {
     // Compute top-level stats from children
     const children = snap.tree?.children || [];
     const topDirs = children
-        .filter(c => c.node_type === 'directory')
+        .filter(isDirectoryNode)
         .sort((a, b) => b.disk_entry.size - a.disk_entry.size)
         .slice(0, 5);
     const topFiles = children
-        .filter(c => c.node_type === 'file')
+        .filter(isFileNode)
         .sort((a, b) => b.disk_entry.size - a.disk_entry.size)
         .slice(0, 5);
 

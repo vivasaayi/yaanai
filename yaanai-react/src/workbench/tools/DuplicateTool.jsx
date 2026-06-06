@@ -1,6 +1,7 @@
 /**
  * DuplicateTool — Find true duplicates using SHA256 content hashing.
  *
+ * Uses the current central scan snapshot as the candidate list.
  * Features:
  * - Parallel hashing for speed
  * - Real-time progress reporting
@@ -14,9 +15,10 @@ import { useScanState } from '../state/ScanStateContext';
 import { CButton, CBadge, CCollapse, CFormCheck, CProgress, CProgressBar } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
 import { cilFile, cilTrash, cilCopy, cilMediaStop } from '@coreui/icons';
+import { buildDuplicateCandidates } from '../utils/treeAnalysis';
 
 export default function DuplicateTool() {
-    const { currentPath } = useScanState();
+    const { currentSnapshot, hasData } = useScanState();
 
     const [scanResult, setScanResult] = useState(null);
     const [scanning, setScanning] = useState(false);
@@ -25,10 +27,18 @@ export default function DuplicateTool() {
     const [deleting, setDeleting] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [displayedProgressPercent, setDisplayedProgressPercent] = useState(0);
+    const [resultVersion, setResultVersion] = useState(null);
 
     // Progress state
     const [progress, setProgress] = useState(null);
     const [progressText, setProgressText] = useState('');
+
+    useEffect(() => {
+        setScanResult(null);
+        setSelectedFiles(new Set());
+        setExpandedGroups(new Set());
+        setResultVersion(null);
+    }, [currentSnapshot?.version]);
 
     // Setup progress listener
     useEffect(() => {
@@ -98,13 +108,16 @@ export default function DuplicateTool() {
     }, [progressPercent, scanning]);
 
     async function runScan() {
-        if (!currentPath) return;
+        if (!currentSnapshot?.tree) return;
+        const snapshotVersion = currentSnapshot.version;
+        const files = buildDuplicateCandidates(currentSnapshot.tree);
         setScanning(true);
         setSelectedFiles(new Set());
         setProgress(null);
-        setProgressText('Initializing scan...');
+        setResultVersion(snapshotVersion);
+        setProgressText(`Initializing scan from snapshot v${snapshotVersion}...`);
         try {
-            const result = await invoke("find_true_duplicates", { folderName: currentPath });
+            const result = await invoke("find_true_duplicates_for_files", { files });
             if (result.cancelled) {
                 setProgressText(`Scan cancelled after ${result.files_hashed + result.cached_hashes_reused} candidates`);
                 return;
@@ -182,8 +195,10 @@ export default function DuplicateTool() {
         try {
             const homeDir = await invoke("get_home_directory");
             const filePath = `${homeDir}/yaanai_duplicates.${format}`;
-            await invoke("export_report", {
-                format, reportType: 'duplicates', filePath, folderName: currentPath
+            await invoke("export_duplicate_result", {
+                format,
+                filePath,
+                result: scanResult,
             });
             alert(`Exported to: ${filePath}`);
         } catch (e) {
@@ -199,7 +214,7 @@ export default function DuplicateTool() {
         <div className="p-3">
             {/* Controls */}
             <div className="d-flex align-items-center gap-2 mb-3">
-                <CButton onClick={runScan} color="primary" size="sm" disabled={scanning || !currentPath}>
+                <CButton onClick={runScan} color="primary" size="sm" disabled={scanning || !hasData}>
                     {scanning ? (
                         <><span className="spinner-border spinner-border-sm me-1" /> Scanning...</>
                     ) : scanResult ? 'Re-scan' : 'Find Duplicates'}
@@ -309,6 +324,12 @@ export default function DuplicateTool() {
                             <div className="text-muted small">Errors</div>
                         </div>
                     )}
+                    {resultVersion != null && (
+                        <div>
+                            <strong>v{resultVersion}</strong>
+                            <div className="text-muted small">Snapshot</div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -369,7 +390,7 @@ export default function DuplicateTool() {
                 <div className="text-center text-muted py-4">
                     <CIcon icon={cilCopy} size="3xl" className="mb-3 text-muted" />
                     <h6>Duplicate Finder</h6>
-                    <p>Click "Find Duplicates" to scan for files with identical content using SHA256 hashing.</p>
+                    <p>{hasData ? 'Click "Find Duplicates" to hash files from the current scan snapshot.' : 'Scan a directory before finding duplicates.'}</p>
                     <p className="small">Uses parallel hashing with incremental cache reuse for faster repeat scans.</p>
                 </div>
             ) : null}
