@@ -200,12 +200,6 @@ function Settings() {
                                                 <div className="small text-muted">Scan Records</div>
                                             </div>
                                         </div>
-                                        <div className="col-md-3">
-                                            <div className="border rounded p-3 text-center">
-                                                <h3>{dbStats.cached_hashes_count}</h3>
-                                                <div className="small text-muted">Cached Hashes</div>
-                                            </div>
-                                        </div>
                                     </div>
                                 ) : (
                                     <div className="text-center text-muted p-4">Loading database stats...</div>

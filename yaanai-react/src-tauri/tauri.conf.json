@@ -31,7 +31,7 @@
     "copyright": "",
     "category": "DeveloperTool",
     "shortDescription": "YAANAI - Desktop File Analyzer",
-    "longDescription": "A modern desktop application for analyzing file systems, detecting duplicates, and managing disk space.",
+    "longDescription": "A modern desktop application for analyzing file systems, reviewing cleanup candidates, and managing disk space.",
     "externalBin": [],
     "windows": {
       "certificateThumbprint": null,

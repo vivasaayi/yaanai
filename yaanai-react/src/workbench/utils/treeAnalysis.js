@@ -64,16 +64,6 @@ export function computeTreeStats(tree) {
     };
 }
 
-export function buildDuplicateCandidates(tree) {
-    return flattenTree(tree, { includeDirs: false, includeFiles: true })
-        .map(({ node }) => ({
-            path: node.disk_entry?.path || '',
-            name: node.disk_entry?.name || (node.disk_entry?.path || '').split('/').pop() || '',
-            size: node.disk_entry?.size || 0,
-        }))
-        .filter((file) => file.path && file.size > 0);
-}
-
 export function searchTree(tree, query) {
     const pattern = query.pattern.trim();
     const patternLower = pattern.toLowerCase();
@@ -134,6 +124,268 @@ export function searchTree(tree, query) {
     };
 }
 
+export const DUPLICATE_MATCH_MODES = [
+    {
+        id: 'name_size',
+        label: 'Same name + size',
+        description: 'Fast metadata match. Best first pass for large scans.',
+    },
+    {
+        id: 'name_size_modified',
+        label: 'Same name + size + modified',
+        description: 'Stricter match when the snapshot includes modified time.',
+    },
+    {
+        id: 'size_modified',
+        label: 'Same size + modified',
+        description: 'Finds renamed copies, with more review needed.',
+    },
+];
+
+export function buildMetadataDuplicateGroups(tree, options = {}) {
+    const state = createDuplicateState(tree, options);
+    walkFilesIterative(tree, (node) => visitDuplicateCandidate(node, state));
+    return finalizeDuplicateState(state);
+}
+
+export async function buildMetadataDuplicateGroupsAsync(tree, options = {}, onProgress = () => {}) {
+    const state = createDuplicateState(tree, options);
+    const chunkSize = Math.max(100, Number(options.chunkSize) || 5000);
+    const shouldCancel = typeof options.shouldCancel === 'function' ? options.shouldCancel : () => false;
+    const stack = tree ? [{ node: tree, isRoot: true }] : [];
+
+    while (stack.length > 0) {
+        let processed = 0;
+        while (stack.length > 0 && processed < chunkSize) {
+            if (shouldCancel()) {
+                return finalizeDuplicateState(state, { cancelled: true });
+            }
+
+            const { node, isRoot } = stack.pop();
+            processed += 1;
+
+            if (!isRoot && isFileNode(node)) {
+                visitDuplicateCandidate(node, state);
+            }
+
+            const children = Array.isArray(node?.children) ? node.children : [];
+            for (let i = children.length - 1; i >= 0; i -= 1) {
+                stack.push({ node: children[i], isRoot: false });
+            }
+        }
+
+        onProgress({
+            filesScanned: state.filesScanned,
+            duplicateCandidates: state.duplicateCandidates,
+            groupsSeen: state.groupsByKey.size,
+            skippedSmallFiles: state.skippedSmallFiles,
+            missingMetadataFiles: state.missingMetadataFiles,
+        });
+        await yieldToMainThread();
+    }
+
+    return finalizeDuplicateState(state);
+}
+
+function createDuplicateState(tree, options) {
+    return {
+        tree,
+        options: normalizeDuplicateOptions(options),
+        startedAt: Date.now(),
+        filesScanned: 0,
+        skippedSmallFiles: 0,
+        missingMetadataFiles: 0,
+        duplicateCandidates: 0,
+        groupsByKey: new Map(),
+    };
+}
+
+function normalizeDuplicateOptions(options = {}) {
+    return {
+        matchMode: DUPLICATE_MATCH_MODES.some((mode) => mode.id === options.matchMode)
+            ? options.matchMode
+            : 'name_size',
+        minSizeBytes: Math.max(0, Number(options.minSizeBytes) || 0),
+        includeZeroByte: Boolean(options.includeZeroByte),
+    };
+}
+
+function walkFilesIterative(tree, visitFile) {
+    const stack = tree ? [{ node: tree, isRoot: true }] : [];
+    while (stack.length > 0) {
+        const { node, isRoot } = stack.pop();
+        if (!isRoot && isFileNode(node)) {
+            visitFile(node);
+        }
+
+        const children = Array.isArray(node?.children) ? node.children : [];
+        for (let i = children.length - 1; i >= 0; i -= 1) {
+            stack.push({ node: children[i], isRoot: false });
+        }
+    }
+}
+
+function visitDuplicateCandidate(node, state) {
+    const entry = node.disk_entry || {};
+    const size = Number(entry.size) || 0;
+    state.filesScanned += 1;
+
+    if (!state.options.includeZeroByte && size === 0) {
+        state.skippedSmallFiles += 1;
+        return;
+    }
+    if (size < state.options.minSizeBytes) {
+        state.skippedSmallFiles += 1;
+        return;
+    }
+
+    const fingerprint = buildMetadataFingerprint(entry, state.options.matchMode);
+    if (!fingerprint) {
+        state.missingMetadataFiles += 1;
+        return;
+    }
+
+    const file = {
+        path: entry.path || '',
+        name: entry.name || fileName(entry.path || ''),
+        size,
+        size_h: entry.size_h || formatBytes(size),
+        modified_unix_secs: normalizeTimestamp(entry.modified_unix_secs),
+        created_unix_secs: normalizeTimestamp(entry.created_unix_secs),
+    };
+
+    if (!file.path) return;
+
+    let group = state.groupsByKey.get(fingerprint.key);
+    if (!group) {
+        group = {
+            key: fingerprint.key,
+            match_fields: fingerprint.fields,
+            match_label: fingerprint.label,
+            confidence: confidenceForMatchMode(state.options.matchMode),
+            files: [],
+        };
+        state.groupsByKey.set(fingerprint.key, group);
+    }
+
+    group.files.push(file);
+    if (group.files.length === 2) {
+        state.duplicateCandidates += 2;
+    } else if (group.files.length > 2) {
+        state.duplicateCandidates += 1;
+    }
+}
+
+function finalizeDuplicateState(state, overrides = {}) {
+    const groups = Array.from(state.groupsByKey.values())
+        .filter((group) => group.files.length > 1)
+        .map((group, index) => {
+            const files = [...group.files].sort((a, b) => {
+                const pathDelta = a.path.length - b.path.length;
+                if (pathDelta !== 0) return pathDelta;
+                return a.path.localeCompare(b.path);
+            });
+            const size = files[0]?.size || 0;
+            const totalSize = files.reduce((sum, file) => sum + (file.size || 0), 0);
+            const wastedSpace = files.slice(1).reduce((sum, file) => sum + (file.size || 0), 0);
+            return {
+                id: `metadata:${index}:${group.key}`,
+                key: group.key,
+                match_fields: group.match_fields,
+                match_label: group.match_label,
+                confidence: group.confidence,
+                files,
+                size,
+                size_h: formatBytes(size),
+                total_size: totalSize,
+                total_size_h: formatBytes(totalSize),
+                wasted_space: wastedSpace,
+                wasted_space_h: formatBytes(wastedSpace),
+            };
+        })
+        .sort((a, b) => {
+            const wastedDelta = b.wasted_space - a.wasted_space;
+            if (wastedDelta !== 0) return wastedDelta;
+            return b.files.length - a.files.length;
+        });
+
+    const totalDuplicates = groups.reduce((sum, group) => sum + Math.max(0, group.files.length - 1), 0);
+    const totalWastedSpace = groups.reduce((sum, group) => sum + group.wasted_space, 0);
+
+    return {
+        match_mode: state.options.matchMode,
+        match_label: DUPLICATE_MATCH_MODES.find((mode) => mode.id === state.options.matchMode)?.label || state.options.matchMode,
+        total_files_scanned: state.filesScanned,
+        total_candidates: state.duplicateCandidates,
+        total_groups: groups.length,
+        total_duplicates: totalDuplicates,
+        total_wasted_space: totalWastedSpace,
+        total_wasted_space_h: formatBytes(totalWastedSpace),
+        skipped_small_files: state.skippedSmallFiles,
+        missing_metadata_files: state.missingMetadataFiles,
+        duration_ms: Date.now() - state.startedAt,
+        groups,
+        cancelled: false,
+        ...overrides,
+    };
+}
+
+function buildMetadataFingerprint(entry, matchMode) {
+    const name = normalizeFileName(entry.name || fileName(entry.path || ''));
+    const size = Number(entry.size) || 0;
+    const modified = normalizeTimestamp(entry.modified_unix_secs);
+
+    switch (matchMode) {
+        case 'name_size_modified':
+            if (modified == null) return null;
+            return {
+                key: ['name', name, 'size', size, 'modified', modified].join('|'),
+                fields: ['name', 'size', 'modified'],
+                label: 'name + size + modified',
+            };
+        case 'size_modified':
+            if (modified == null) return null;
+            return {
+                key: ['size', size, 'modified', modified].join('|'),
+                fields: ['size', 'modified'],
+                label: 'size + modified',
+            };
+        case 'name_size':
+        default:
+            return {
+                key: ['name', name, 'size', size].join('|'),
+                fields: ['name', 'size'],
+                label: 'name + size',
+            };
+    }
+}
+
+function confidenceForMatchMode(matchMode) {
+    switch (matchMode) {
+        case 'name_size_modified':
+            return 'strong';
+        case 'size_modified':
+            return 'review';
+        case 'name_size':
+        default:
+            return 'review';
+    }
+}
+
+function normalizeTimestamp(value) {
+    if (value == null || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeFileName(name) {
+    return String(name || '').trim().toLowerCase();
+}
+
+function yieldToMainThread() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function normalizeExtensions(value) {
     if (!value) return [];
     const list = Array.isArray(value) ? value : String(value).split(',');
@@ -145,6 +397,10 @@ function normalizeExtensions(value) {
 function fileExtension(name) {
     const index = name.lastIndexOf('.');
     return index >= 0 ? name.slice(index + 1).toLowerCase() : '';
+}
+
+function fileName(path) {
+    return String(path || '').split('/').filter(Boolean).pop() || '';
 }
 
 function matchesPattern(text, patternLower, regex, globRegex) {

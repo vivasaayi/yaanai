@@ -5,7 +5,7 @@ import React, {useState, useEffect} from "react";
 import { useFileSystem } from './FileSystemContext';
 import {
     CButton, CCard, CCardBody, CCardHeader,
-    CCol, CRow, CProgress, CProgressBar, CBadge
+    CCol, CRow, CProgress, CProgressBar
 } from "@coreui/react";
 
 import CIcon from "@coreui/icons-react";
@@ -52,14 +52,13 @@ function TreeBuilder() {
     const {
         currentPath, treeData, loading, progress, progressText,
         scanErrors, setCurrentPath, scanDirectory, chooseFolder,
-        setScanErrors, findTrueDuplicates, exportReport
+        setScanErrors, exportReport
     } = useFileSystem();
 
     const [files, setFiles] = useState([]);
     const [analysisType, setAnalysisType] = useState('tree');
     const [visualizationType, setVisualizationType] = useState('treelist');
     const [showErrors, setShowErrors] = useState(false);
-    const [duplicateResult, setDuplicateResult] = useState(null);
     const [diskUsageData, setDiskUsageData] = useState([]);
     const [searchPattern, setSearchPattern] = useState('');
     const [searchResults, setSearchResults] = useState(null);
@@ -83,13 +82,6 @@ function TreeBuilder() {
                 setFiles(treeData);
             } else {
                 await scanDirectory(currentPath);
-            }
-        } else if (type === 'duplicates') {
-            try {
-                const result = await findTrueDuplicates();
-                setDuplicateResult(result);
-            } catch (error) {
-                console.error("Duplicate analysis failed:", error);
             }
         } else if (type === 'disk') {
             try {
@@ -123,7 +115,7 @@ function TreeBuilder() {
 
     async function handleExport(format) {
         const homeDir = await invoke("get_home_directory");
-        const reportType = analysisType === 'duplicates' ? 'duplicates' : analysisType === 'disk' ? 'disk_usage' : 'tree';
+        const reportType = analysisType === 'disk' ? 'disk_usage' : 'tree';
         const filePath = `${homeDir}/yaanai_export_${reportType}.${format}`;
         try {
             const resultPath = await exportReport(format, reportType, filePath, currentPath);
@@ -172,55 +164,6 @@ function TreeBuilder() {
                 <TreeListColumn dataField="disk_entry.size" caption="Size (bytes)" minWidth={100} />
                 <TreeListColumn dataField="disk_entry.size_h" caption="Size" minWidth={100} />
             </TreeList>
-        );
-    }
-
-    function renderDuplicates() {
-        if (!duplicateResult) {
-            return (
-                <div className="text-center p-4 text-muted">
-                    Click "Duplicates" to scan for duplicate files using SHA256 content hashing.
-                </div>
-            );
-        }
-
-        const { groups } = duplicateResult;
-        if (groups.length === 0) {
-            return (
-                <div className="text-center p-4 text-muted">
-                    No duplicate files found.
-                </div>
-            );
-        }
-
-        return (
-            <div>
-                <div className="mb-3 p-3 bg-light border rounded">
-                    <div className="d-flex gap-4">
-                        <div><strong>{duplicateResult.total_files_scanned}</strong> <span className="small text-muted">Files Scanned</span></div>
-                        <div><strong className="text-warning">{groups.length}</strong> <span className="small text-muted">Groups</span></div>
-                        <div><strong className="text-danger">{duplicateResult.total_duplicates}</strong> <span className="small text-muted">Duplicates</span></div>
-                        <div><strong className="text-danger">{duplicateResult.total_wasted_space_h}</strong> <span className="small text-muted">Wasted</span></div>
-                    </div>
-                </div>
-                <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
-                    {groups.map((group) => (
-                        <div key={group.hash} className="mb-2 border rounded p-2">
-                            <div className="d-flex align-items-center gap-2 mb-1">
-                                <strong>{group.files[0]?.name}</strong>
-                                <CBadge color="warning">{group.files.length} copies</CBadge>
-                                <CBadge color="info">{group.size_h}</CBadge>
-                                <CBadge color="danger">Wasting {group.wasted_space_h}</CBadge>
-                            </div>
-                            {group.files.map((file, i) => (
-                                <div key={file.path} className="small text-muted ps-3">
-                                    {i === 0 ? '\u2705' : '\u274C'} {file.path}
-                                </div>
-                            ))}
-                        </div>
-                    ))}
-                </div>
-            </div>
         );
     }
 
@@ -491,7 +434,6 @@ function TreeBuilder() {
     }
 
     function renderVisualization() {
-        if (analysisType === 'duplicates') return renderDuplicates();
         if (analysisType === 'disk') return renderDiskUsage();
         if (analysisType === 'search') return renderSearchResults();
 
@@ -567,10 +509,6 @@ function TreeBuilder() {
                                         onClick={() => runAnalysis('tree')} size="sm">
                                         Directory Tree
                                     </CButton>
-                                    <CButton color={analysisType === 'duplicates' ? 'primary' : 'outline-primary'}
-                                        onClick={() => runAnalysis('duplicates')} size="sm">
-                                        Duplicates (SHA256)
-                                    </CButton>
                                     <CButton color={analysisType === 'disk' ? 'primary' : 'outline-primary'}
                                         onClick={() => runAnalysis('disk')} size="sm">
                                         Disk Usage
@@ -613,7 +551,7 @@ function TreeBuilder() {
                                 )}
 
                                 {/* Export buttons */}
-                                {(treeData || duplicateResult || diskUsageData.length > 0) && (
+                                {(treeData || diskUsageData.length > 0) && (
                                     <div className="mt-3">
                                         <span className="small text-muted me-2">Export:</span>
                                         <CButton onClick={() => handleExport('json')} color="outline-secondary" size="sm" className="me-1">
@@ -669,7 +607,6 @@ function TreeBuilder() {
                         {!loading && treeData && (
                             <div className="mt-3 text-muted small">
                                 {analysisType === 'tree' && `${files.children ? files.children.length : 0} items scanned`}
-                                {analysisType === 'duplicates' && duplicateResult && `${duplicateResult.groups.length} duplicate groups, ${duplicateResult.total_wasted_space_h} wasted`}
                                 {analysisType === 'disk' && `${diskUsageData.length} directories analyzed`}
                                 {analysisType === 'search' && searchResults && `${searchResults.total_matches} matches found`}
                                 {scanErrors.length > 0 && ` | ${scanErrors.length} errors`}

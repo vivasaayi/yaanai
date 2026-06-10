@@ -136,8 +136,14 @@ fn search_recursive(
             }
             if query.recursive {
                 search_recursive(
-                    &path, query, pattern_lower, regex_pattern,
-                    ignore_matcher, results, errors, files_searched,
+                    &path,
+                    query,
+                    pattern_lower,
+                    regex_pattern,
+                    ignore_matcher,
+                    results,
+                    errors,
+                    files_searched,
                 );
             }
         } else if metadata.is_file() {
@@ -146,15 +152,20 @@ fn search_recursive(
 
             // Check size filters
             if let Some(min) = query.min_size {
-                if size < min { continue; }
+                if size < min {
+                    continue;
+                }
             }
             if let Some(max) = query.max_size {
-                if size > max { continue; }
+                if size > max {
+                    continue;
+                }
             }
 
             // Check extension filter
             if let Some(ref exts) = query.extensions {
-                let file_ext = path.extension()
+                let file_ext = path
+                    .extension()
                     .map(|e| e.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
                 if !exts.iter().any(|ext| ext.to_lowercase() == file_ext) {

@@ -1,7 +1,6 @@
 use crate::ignore_matcher::IgnoreMatcher;
 use crate::types::DiskEntry;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs::{DirEntry, ReadDir};
 use std::path::Path;
 use tokio::sync::mpsc;
@@ -111,20 +110,12 @@ impl RecursiveFileTreeBuilder {
         .await
         .map_err(|e| format!("Tree build task failed: {}", e))
     }
-
-    /// Get duplicate files from a previously built tree (by size+name key).
-    pub async fn get_duplicates_async(&self) -> Result<Vec<TreeNode>, String> {
-        // This basic duplicate detection is superseded by duplicate_detector.rs (SHA256).
-        // Kept for backward compatibility with existing frontend.
-        Ok(vec![])
-    }
 }
 
 // Internal state for tree building (runs on blocking thread)
 struct TreeBuilderState<'a> {
     pub root_node: TreeNode,
     pub tree_builder_errors: Vec<String>,
-    pub files_map: HashMap<String, Vec<TreeNode>>,
     pub files_processed: u64,
     pub directories_processed: u64,
     ignore_matcher: &'a IgnoreMatcher,
@@ -135,7 +126,6 @@ impl<'a> TreeBuilderState<'a> {
         Self {
             root_node: TreeNode::new(),
             tree_builder_errors: vec![],
-            files_map: HashMap::new(),
             files_processed: 0,
             directories_processed: 0,
             ignore_matcher,
@@ -236,13 +226,6 @@ impl<'a> TreeBuilderState<'a> {
                 child_tree_node.node_type = NodeType::File;
                 child_tree_node.disk_entry = DiskEntry::new(&dir_entry);
                 parent_node.disk_entry.size += child_tree_node.disk_entry.size;
-
-                // Track for size-based duplicate detection
-                let key = format!("{}{}", dir_path, child_tree_node.disk_entry.size);
-                self.files_map
-                    .entry(key)
-                    .or_insert_with(Vec::new)
-                    .push(child_tree_node.clone());
             }
 
             parent_node.disk_entry.calculate_human_size();
@@ -313,5 +296,11 @@ fn root_disk_entry(path_name: &str) -> DiskEntry {
         size_h: bytesize::ByteSize::b(size).to_string(),
         is_dir,
         is_file,
+        modified_unix_secs: metadata
+            .as_ref()
+            .and_then(DiskEntry::metadata_modified_unix_secs),
+        created_unix_secs: metadata
+            .as_ref()
+            .and_then(DiskEntry::metadata_created_unix_secs),
     }
 }

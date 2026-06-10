@@ -1,399 +1,477 @@
 /**
- * DuplicateTool — Find true duplicates using SHA256 content hashing.
+ * DuplicateTool - metadata-only duplicate candidate detection.
  *
- * Uses the current central scan snapshot as the candidate list.
- * Features:
- * - Parallel hashing for speed
- * - Real-time progress reporting
- * - Live stats during scan
+ * This tool reads the current scan snapshot and never hashes file contents.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { useScanState } from '../state/ScanStateContext';
-import { CButton, CBadge, CCollapse, CFormCheck, CProgress, CProgressBar } from '@coreui/react';
+import { CBadge, CButton, CFormCheck, CProgress, CProgressBar } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilFile, cilTrash, cilCopy, cilMediaStop } from '@coreui/icons';
-import { buildDuplicateCandidates } from '../utils/treeAnalysis';
+import { cilCopy, cilFile, cilMediaStop, cilSearch, cilTrash } from '@coreui/icons';
+import {
+    DUPLICATE_MATCH_MODES,
+    buildMetadataDuplicateGroupsAsync,
+    formatBytes,
+} from '../utils/treeAnalysis';
+
+const confidenceColor = {
+    strong: 'success',
+    review: 'warning',
+};
+
+const PAGE_SIZE = 200;
 
 export default function DuplicateTool() {
-    const { currentSnapshot, hasData } = useScanState();
-
-    const [scanResult, setScanResult] = useState(null);
-    const [scanning, setScanning] = useState(false);
-    const [selectedFiles, setSelectedFiles] = useState(new Set());
+    const { currentSnapshot, hasData, staleStatus } = useScanState();
+    const [matchMode, setMatchMode] = useState('name_size');
+    const [minSizeMB, setMinSizeMB] = useState('0');
+    const [includeZeroByte, setIncludeZeroByte] = useState(false);
+    const [result, setResult] = useState(null);
+    const [progress, setProgress] = useState(null);
+    const [analyzing, setAnalyzing] = useState(false);
+    const [selectedPaths, setSelectedPaths] = useState(new Set());
     const [expandedGroups, setExpandedGroups] = useState(new Set());
+    const [visibleGroups, setVisibleGroups] = useState(PAGE_SIZE);
     const [deleting, setDeleting] = useState(false);
     const [exporting, setExporting] = useState(false);
-    const [displayedProgressPercent, setDisplayedProgressPercent] = useState(0);
-    const [resultVersion, setResultVersion] = useState(null);
-
-    // Progress state
-    const [progress, setProgress] = useState(null);
-    const [progressText, setProgressText] = useState('');
+    const cancelRef = useRef(false);
 
     useEffect(() => {
-        setScanResult(null);
-        setSelectedFiles(new Set());
+        cancelRef.current = true;
+        setResult(null);
+        setProgress(null);
+        setSelectedPaths(new Set());
         setExpandedGroups(new Set());
-        setResultVersion(null);
+        setVisibleGroups(PAGE_SIZE);
+        setAnalyzing(false);
     }, [currentSnapshot?.version]);
 
-    // Setup progress listener
-    useEffect(() => {
-        const unlisten = listen('duplicate-progress', (event) => {
-            const p = event.payload;
-            setProgress(p);
+    const minSizeBytes = useMemo(() => {
+        const parsed = Number.parseFloat(minSizeMB);
+        return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed * 1024 * 1024) : 0;
+    }, [minSizeMB]);
 
-            // Update progress text based on phase
-            let text = '';
-            switch (p.phase) {
-                case 'scanning':
-                    text = `Scanning files... (${p.files_processed} files, ${p.total_candidates} candidates)`;
-                    break;
-                case 'grouping':
-                    text = `Analyzing duplicates... (${p.files_processed} scanned)`;
-                    break;
-                case 'hashing':
-                    const percent = p.total_candidates > 0
-                        ? Math.round((p.files_processed / p.total_candidates) * 100)
-                        : 0;
-                    text = `Hashing files... ${percent}% (${p.files_processed}/${p.total_candidates})`;
-                    if (p.groups_found > 0) {
-                        text += ` • ${p.groups_found} duplicate groups found`;
-                    }
-                    break;
-                case 'complete':
-                    text = `Scan complete: ${p.groups_found} duplicate groups, ${p.files_hashed} files hashed, ${p.cached_hashes_reused} cache hits`;
-                    break;
-                case 'cancelled':
-                    text = `Cancelling scan... processed ${p.files_processed} candidates so far`;
-                    break;
-                default:
-                    text = p.current_file;
-            }
-            setProgressText(text);
-        });
-
-        return () => {
-            unlisten.then(f => f());
-        };
-    }, []);
-
-    const progressPercent = useMemo(() => {
-        if (!progress || progress.total_candidates <= 0 || progress.phase !== 'hashing') {
-            return 0;
-        }
-        return Math.round((progress.files_processed / progress.total_candidates) * 100);
-    }, [progress]);
-
-    useEffect(() => {
-        if (!scanning) {
-            setDisplayedProgressPercent(progressPercent);
-            return undefined;
-        }
-
-        const nextFrame = window.requestAnimationFrame(() => {
-            setDisplayedProgressPercent((previous) => {
-                const delta = progressPercent - previous;
-                if (Math.abs(delta) < 1) {
-                    return progressPercent;
+    const groups = result?.groups || [];
+    const displayedGroups = groups.slice(0, visibleGroups);
+    const selectedBytes = useMemo(() => {
+        if (!result) return 0;
+        let total = 0;
+        result.groups.forEach((group) => {
+            group.files.forEach((file) => {
+                if (selectedPaths.has(file.path)) {
+                    total += file.size || 0;
                 }
-                return previous + delta * 0.2;
             });
         });
+        return total;
+    }, [result, selectedPaths]);
 
-        return () => window.cancelAnimationFrame(nextFrame);
-    }, [progressPercent, scanning]);
-
-    async function runScan() {
+    async function runAnalysis() {
         if (!currentSnapshot?.tree) return;
-        const snapshotVersion = currentSnapshot.version;
-        const files = buildDuplicateCandidates(currentSnapshot.tree);
-        setScanning(true);
-        setSelectedFiles(new Set());
-        setProgress(null);
-        setResultVersion(snapshotVersion);
-        setProgressText(`Initializing scan from snapshot v${snapshotVersion}...`);
+        cancelRef.current = false;
+        setAnalyzing(true);
+        setResult(null);
+        setProgress({
+            filesScanned: 0,
+            duplicateCandidates: 0,
+            groupsSeen: 0,
+            skippedSmallFiles: 0,
+            missingMetadataFiles: 0,
+        });
+        setSelectedPaths(new Set());
+        setExpandedGroups(new Set());
+        setVisibleGroups(PAGE_SIZE);
+
         try {
-            const result = await invoke("find_true_duplicates_for_files", { files });
-            if (result.cancelled) {
-                setProgressText(`Scan cancelled after ${result.files_hashed + result.cached_hashes_reused} candidates`);
-                return;
-            }
-            setScanResult(result);
-        } catch (e) {
-            console.error("Duplicate scan failed:", e);
-            setProgressText("Scan failed: " + e);
+            await new Promise((resolve) => window.requestAnimationFrame(resolve));
+            const nextResult = await buildMetadataDuplicateGroupsAsync(
+                currentSnapshot.tree,
+                {
+                    matchMode,
+                    minSizeBytes,
+                    includeZeroByte,
+                    chunkSize: 10000,
+                    shouldCancel: () => cancelRef.current,
+                },
+                setProgress,
+            );
+            setResult({
+                ...nextResult,
+                snapshot_version: currentSnapshot.version,
+                snapshot_path: currentSnapshot.path,
+            });
+        } catch (error) {
+            setResult({
+                groups: [],
+                total_files_scanned: 0,
+                total_groups: 0,
+                total_duplicates: 0,
+                total_wasted_space: 0,
+                total_wasted_space_h: '0 B',
+                errors: [String(error)],
+            });
         } finally {
-            setScanning(false);
+            setAnalyzing(false);
         }
     }
 
-    async function cancelScan() {
-        setProgressText('Cancelling scan...');
-        try {
-            await invoke('cancel_duplicate_scan');
-        } catch (e) {
-            console.error('Cancel failed:', e);
-        }
+    function cancelAnalysis() {
+        cancelRef.current = true;
     }
 
-    function toggleGroup(hash) {
-        setExpandedGroups(prev => {
+    function toggleGroup(groupId) {
+        setExpandedGroups((prev) => {
             const next = new Set(prev);
-            if (next.has(hash)) next.delete(hash); else next.add(hash);
+            if (next.has(groupId)) next.delete(groupId);
+            else next.add(groupId);
             return next;
         });
     }
 
     function toggleFile(path) {
-        setSelectedFiles(prev => {
+        setSelectedPaths((prev) => {
             const next = new Set(prev);
-            if (next.has(path)) next.delete(path); else next.add(path);
+            if (next.has(path)) next.delete(path);
+            else next.add(path);
             return next;
         });
     }
 
-    function selectAllDuplicates() {
-        if (!scanResult) return;
+    function selectAllExtraCopies() {
         const paths = new Set();
-        scanResult.groups.forEach(g => {
-            g.files.slice(1).forEach(f => paths.add(f.path));
+        groups.forEach((group) => {
+            group.files.slice(1).forEach((file) => paths.add(file.path));
         });
-        setSelectedFiles(paths);
+        setSelectedPaths(paths);
     }
 
-    function selectGroupDuplicates(group) {
-        setSelectedFiles(prev => {
+    function selectGroupExtraCopies(group) {
+        setSelectedPaths((prev) => {
             const next = new Set(prev);
-            group.files.slice(1).forEach(f => next.add(f.path));
+            group.files.slice(1).forEach((file) => next.add(file.path));
             return next;
         });
     }
 
-    async function handleDelete() {
-        if (selectedFiles.size === 0) return;
+    async function trashSelected() {
+        if (selectedPaths.size === 0) return;
         setDeleting(true);
         try {
-            await invoke("delete_files", {
-                paths: Array.from(selectedFiles),
+            const paths = Array.from(selectedPaths);
+            const deleteResult = await invoke("delete_files", {
+                paths,
                 useTrash: true,
             });
-            setSelectedFiles(new Set());
-            // Re-scan to refresh
-            await runScan();
-        } catch (e) {
-            console.error("Delete failed:", e);
+            const deleted = new Set(deleteResult.deleted || paths);
+            setSelectedPaths(new Set());
+            setResult((prev) => pruneDeletedPaths(prev, deleted));
+        } catch (error) {
+            console.error("Delete failed:", error);
+        } finally {
+            setDeleting(false);
         }
-        setDeleting(false);
     }
 
-    async function handleExport(format) {
+    async function exportResult(format) {
+        if (!result) return;
         setExporting(true);
         try {
             const homeDir = await invoke("get_home_directory");
-            const filePath = `${homeDir}/yaanai_duplicates.${format}`;
-            await invoke("export_duplicate_result", {
+            const filePath = `${homeDir}/yaanai_metadata_duplicates.${format}`;
+            await invoke("export_metadata_duplicate_result", {
                 format,
                 filePath,
-                result: scanResult,
+                result,
             });
             alert(`Exported to: ${filePath}`);
-        } catch (e) {
-            alert("Export failed: " + e);
+        } catch (error) {
+            alert("Export failed: " + error);
+        } finally {
+            setExporting(false);
         }
-        setExporting(false);
     }
 
-    const groups = scanResult?.groups || [];
-    const indeterminateProgress = scanning && progress && progress.phase !== 'hashing' && progress.phase !== 'complete';
+    async function copyPath(path) {
+        try {
+            await navigator.clipboard.writeText(path);
+        } catch {
+            // Clipboard access can be unavailable in preview contexts.
+        }
+    }
+
+    const progressPercent = currentSnapshot?.fileCount && progress
+        ? Math.min(100, Math.round((progress.filesScanned / currentSnapshot.fileCount) * 100))
+        : 0;
+
+    if (!hasData) {
+        return (
+            <div className="d-flex align-items-center justify-content-center h-100 text-muted">
+                Scan a directory to find duplicate candidates.
+            </div>
+        );
+    }
 
     return (
-        <div className="p-3">
-            {/* Controls */}
-            <div className="d-flex align-items-center gap-2 mb-3">
-                <CButton onClick={runScan} color="primary" size="sm" disabled={scanning || !hasData}>
-                    {scanning ? (
-                        <><span className="spinner-border spinner-border-sm me-1" /> Scanning...</>
-                    ) : scanResult ? 'Re-scan' : 'Find Duplicates'}
-                </CButton>
-
-                {scanning && (
-                    <CButton onClick={cancelScan} color="outline-danger" size="sm">
-                        <CIcon icon={cilMediaStop} className="me-1" />
-                        Cancel
+        <div className="d-flex flex-column h-100">
+            <div className="px-3 py-2 border-bottom bg-light">
+                <div className="d-flex align-items-center gap-2 mb-2">
+                    <CButton onClick={runAnalysis} color="primary" size="sm" disabled={analyzing || !hasData}>
+                        {analyzing ? (
+                            <><span className="spinner-border spinner-border-sm me-1" /> Analyzing...</>
+                        ) : (
+                            <><CIcon icon={cilSearch} className="me-1" /> Find Duplicates</>
+                        )}
                     </CButton>
-                )}
+                    {analyzing && (
+                        <CButton onClick={cancelAnalysis} color="outline-danger" size="sm">
+                            <CIcon icon={cilMediaStop} className="me-1" />
+                            Cancel
+                        </CButton>
+                    )}
+                    {groups.length > 0 && (
+                        <CButton onClick={selectAllExtraCopies} color="outline-warning" size="sm" disabled={analyzing}>
+                            Select Extra Copies
+                        </CButton>
+                    )}
+                    {selectedPaths.size > 0 && (
+                        <CButton onClick={trashSelected} color="danger" size="sm" disabled={deleting || analyzing}>
+                            <CIcon icon={cilTrash} className="me-1" />
+                            Trash {selectedPaths.size} / {formatBytes(selectedBytes)}
+                        </CButton>
+                    )}
+                    {result && (
+                        <div className="ms-auto d-flex gap-1">
+                            <CButton size="sm" color="outline-secondary" onClick={() => exportResult('json')} disabled={exporting}>JSON</CButton>
+                            <CButton size="sm" color="outline-secondary" onClick={() => exportResult('csv')} disabled={exporting}>CSV</CButton>
+                        </div>
+                    )}
+                </div>
 
-                {scanResult && groups.length > 0 && (
-                    <CButton onClick={selectAllDuplicates} color="outline-warning" size="sm">
-                        Select All Duplicates
-                    </CButton>
-                )}
+                <div className="d-flex align-items-center gap-3" style={{ fontSize: '12px' }}>
+                    <select
+                        className="form-select form-select-sm"
+                        style={{ width: '260px' }}
+                        value={matchMode}
+                        onChange={(event) => setMatchMode(event.target.value)}
+                        disabled={analyzing}
+                    >
+                        {DUPLICATE_MATCH_MODES.map((mode) => (
+                            <option key={mode.id} value={mode.id}>{mode.label}</option>
+                        ))}
+                    </select>
+                    <div className="d-flex align-items-center gap-1">
+                        <span className="text-muted">Min MB</span>
+                        <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            className="form-control form-control-sm"
+                            style={{ width: '90px' }}
+                            value={minSizeMB}
+                            onChange={(event) => setMinSizeMB(event.target.value)}
+                            disabled={analyzing}
+                        />
+                    </div>
+                    <CFormCheck
+                        label="Include 0-byte"
+                        checked={includeZeroByte}
+                        disabled={analyzing}
+                        onChange={(event) => setIncludeZeroByte(event.target.checked)}
+                    />
+                    <span className="text-muted">
+                        Snapshot v{currentSnapshot.version} / {currentSnapshot.fileCount.toLocaleString()} files
+                        {staleStatus.stale && <span className="text-warning"> / stale state detected</span>}
+                    </span>
+                </div>
 
-                {selectedFiles.size > 0 && (
-                    <CButton onClick={handleDelete} color="danger" size="sm" disabled={deleting}>
-                        <CIcon icon={cilTrash} className="me-1" />
-                        Delete {selectedFiles.size} to Trash
-                    </CButton>
-                )}
-
-                {scanResult && (
-                    <div className="ms-auto d-flex gap-1">
-                        <CButton size="sm" color="outline-secondary" onClick={() => handleExport('json')} disabled={exporting}>JSON</CButton>
-                        <CButton size="sm" color="outline-secondary" onClick={() => handleExport('csv')} disabled={exporting}>CSV</CButton>
+                {analyzing && (
+                    <div className="mt-2">
+                        <div className="d-flex justify-content-between mb-1" style={{ fontSize: '12px' }}>
+                            <span className="text-muted">
+                                {progress?.filesScanned?.toLocaleString() || 0} files checked / {progress?.duplicateCandidates?.toLocaleString() || 0} candidates
+                            </span>
+                            <span className="text-muted">{progressPercent}%</span>
+                        </div>
+                        <CProgress thin>
+                            <CProgressBar animated color="primary" value={progressPercent} />
+                        </CProgress>
                     </div>
                 )}
             </div>
 
-            {/* Progress bar during scanning */}
-            {scanning && (
-                <div className="mb-3">
-                    <div className="d-flex justify-content-between align-items-center mb-2" style={{ fontSize: '12px' }}>
-                        <span className="text-muted">{progressText}</span>
-                        {progress && progress.phase === 'hashing' && <span className="badge bg-info">{progressPercent}%</span>}
-                    </div>
-                    <CProgress className="mb-2" style={{ height: '24px' }}>
-                        <CProgressBar animated color={indeterminateProgress ? 'info' : 'primary'} value={indeterminateProgress ? 100 : displayedProgressPercent} />
-                    </CProgress>
-
-                    {/* Live stats during hashing */}
-                    {progress && (
-                        <div className="d-flex gap-4 p-2 bg-light border rounded" style={{ fontSize: '12px' }}>
-                            <div>
-                                <span className="text-muted">Candidates Processed:</span> <strong>{progress.files_processed}</strong>
-                            </div>
-                            <div>
-                                <span className="text-muted">Total Candidates:</span> <strong>{progress.total_candidates}</strong>
-                            </div>
-                            <div>
-                                <span className="text-muted">Groups Found:</span> <strong className="text-warning">{progress.groups_found}</strong>
-                            </div>
-                            <div>
-                                <span className="text-muted">Files Hashed:</span> <strong>{progress.files_hashed}</strong>
-                            </div>
-                            <div>
-                                <span className="text-muted">Cache Hits:</span> <strong className="text-success">{progress.cached_hashes_reused}</strong>
-                            </div>
-                            {progress.current_file && (
-                                <div className="flex-grow-1 text-truncate" style={{ fontSize: '11px' }}>
-                                    <span className="text-muted">Current:</span> <code>{progress.current_file.split('/').pop()}</code>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Summary */}
-            {scanResult && (
-                <div className="d-flex gap-4 mb-3 p-3 bg-light border rounded" style={{ fontSize: '13px' }}>
+            {result && (
+                <div className="d-flex gap-4 px-3 py-2 border-bottom" style={{ fontSize: '13px' }}>
                     <div>
-                        <strong>{scanResult.total_files_scanned.toLocaleString()}</strong>
-                        <div className="text-muted small">Files Scanned</div>
+                        <strong>{result.total_files_scanned.toLocaleString()}</strong>
+                        <div className="text-muted small">Files Checked</div>
                     </div>
                     <div>
-                        <strong className="text-warning">{groups.length}</strong>
-                        <div className="text-muted small">Duplicate Groups</div>
+                        <strong className="text-warning">{result.total_groups.toLocaleString()}</strong>
+                        <div className="text-muted small">Groups</div>
                     </div>
                     <div>
-                        <strong className="text-danger">{scanResult.total_duplicates}</strong>
-                        <div className="text-muted small">Duplicate Files</div>
+                        <strong className="text-danger">{result.total_duplicates.toLocaleString()}</strong>
+                        <div className="text-muted small">Extra Copies</div>
                     </div>
                     <div>
-                        <strong className="text-danger">{scanResult.total_wasted_space_h}</strong>
-                        <div className="text-muted small">Wasted Space</div>
+                        <strong className="text-danger">{result.total_wasted_space_h}</strong>
+                        <div className="text-muted small">Potential Waste</div>
                     </div>
                     <div>
-                        <strong className="text-success">{scanResult.cached_hashes_reused}</strong>
-                        <div className="text-muted small">Cache Hits</div>
-                    </div>
-                    <div>
-                        <strong>{scanResult.files_hashed}</strong>
-                        <div className="text-muted small">Files Hashed</div>
-                    </div>
-                    <div>
-                        <strong>{(scanResult.duration_ms / 1000).toFixed(2)}s</strong>
+                        <strong>{(result.duration_ms / 1000).toFixed(2)}s</strong>
                         <div className="text-muted small">Elapsed</div>
                     </div>
-                    {scanResult.errors.length > 0 && (
+                    {result.missing_metadata_files > 0 && (
                         <div>
-                            <strong className="text-warning">{scanResult.errors.length}</strong>
-                            <div className="text-muted small">Errors</div>
+                            <strong className="text-warning">{result.missing_metadata_files.toLocaleString()}</strong>
+                            <div className="text-muted small">Missing Metadata</div>
                         </div>
                     )}
-                    {resultVersion != null && (
+                    {result.cancelled && (
                         <div>
-                            <strong>v{resultVersion}</strong>
-                            <div className="text-muted small">Snapshot</div>
+                            <strong className="text-warning">Cancelled</strong>
+                            <div className="text-muted small">Partial Result</div>
                         </div>
                     )}
                 </div>
             )}
 
-            {/* Duplicate groups */}
-            {groups.length > 0 ? (
-                <div style={{ maxHeight: 'calc(100vh - 400px)', overflowY: 'auto' }}>
-                    {groups.map((group) => (
-                        <div key={group.hash} className="border rounded mb-2">
-                            <div
-                                className="d-flex justify-content-between align-items-center p-2 bg-light"
-                                style={{ cursor: 'pointer', fontSize: '13px' }}
-                                onClick={() => toggleGroup(group.hash)}
-                            >
-                                <div className="d-flex align-items-center gap-2">
-                                    <CIcon icon={cilCopy} className="text-warning" />
-                                    <strong>{group.files[0]?.name}</strong>
-                                    <CBadge color="warning">{group.files.length} copies</CBadge>
-                                    <CBadge color="info">{group.size_h}</CBadge>
-                                    <CBadge color="danger">Wasting {group.wasted_space_h}</CBadge>
-                                </div>
-                                <div className="d-flex align-items-center gap-2">
-                                    <CButton size="sm" color="outline-danger"
-                                        onClick={(e) => { e.stopPropagation(); selectGroupDuplicates(group); }}>
-                                        Select Dupes
-                                    </CButton>
-                                    <span>{expandedGroups.has(group.hash) ? '\u25B2' : '\u25BC'}</span>
-                                </div>
-                            </div>
-                            <CCollapse visible={expandedGroups.has(group.hash)}>
-                                <div className="p-2">
-                                    {group.files.map((file, fi) => (
-                                        <div key={file.path}
-                                            className={`d-flex align-items-center gap-2 py-1 px-2 ${fi === 0 ? 'border-start border-3 border-success' : ''}`}
-                                            style={{ fontSize: '12px' }}>
-                                            <CFormCheck
-                                                checked={selectedFiles.has(file.path)}
-                                                onChange={() => toggleFile(file.path)}
-                                            />
-                                            <CIcon icon={cilFile} size="sm" className="text-primary" />
-                                            <span className="flex-grow-1 text-truncate" title={file.path}>
-                                                {file.path}
-                                            </span>
-                                            <span className="text-muted">{file.size_h}</span>
-                                            {fi === 0 && <CBadge color="success" size="sm">Keep</CBadge>}
-                                        </div>
-                                    ))}
-                                    <div className="text-muted mt-1" style={{ fontSize: '10px' }}>
-                                        SHA256: {group.hash.substring(0, 24)}...
+            <div className="flex-grow-1" style={{ overflow: 'auto' }}>
+                {displayedGroups.length > 0 ? (
+                    <div className="p-2">
+                        {displayedGroups.map((group) => {
+                            const expanded = expandedGroups.has(group.id);
+                            return (
+                                <div key={group.id} className="border rounded mb-2">
+                                    <div
+                                        className="d-flex align-items-center gap-2 p-2 bg-light"
+                                        style={{ cursor: 'pointer', fontSize: '13px' }}
+                                        onClick={() => toggleGroup(group.id)}
+                                    >
+                                        <CIcon icon={cilCopy} className="text-warning" />
+                                        <strong className="text-truncate" style={{ maxWidth: '360px' }}>{group.files[0]?.name}</strong>
+                                        <CBadge color="warning">{group.files.length} copies</CBadge>
+                                        <CBadge color="info">{group.size_h}</CBadge>
+                                        <CBadge color={confidenceColor[group.confidence] || 'secondary'}>{group.confidence}</CBadge>
+                                        <CBadge color="danger">Waste {group.wasted_space_h}</CBadge>
+                                        <span className="text-muted ms-auto">{group.match_label}</span>
+                                        <CButton
+                                            size="sm"
+                                            color="outline-danger"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                selectGroupExtraCopies(group);
+                                            }}
+                                        >
+                                            Select Extra
+                                        </CButton>
+                                        <span>{expanded ? '\u25B2' : '\u25BC'}</span>
                                     </div>
+
+                                    {expanded && (
+                                        <table className="table table-sm mb-0" style={{ fontSize: '12px' }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={{ width: '34px' }}></th>
+                                                    <th>Name</th>
+                                                    <th>Path</th>
+                                                    <th style={{ width: '100px', textAlign: 'right' }}>Size</th>
+                                                    <th style={{ width: '150px' }}>Modified</th>
+                                                    <th style={{ width: '44px' }}></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {group.files.map((file, index) => (
+                                                    <tr key={file.path} className={selectedPaths.has(file.path) ? 'table-danger' : ''}>
+                                                        <td>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedPaths.has(file.path)}
+                                                                onChange={() => toggleFile(file.path)}
+                                                            />
+                                                        </td>
+                                                        <td>
+                                                            <CIcon icon={cilFile} size="sm" className="text-primary me-1" />
+                                                            {index === 0 && <CBadge color="success" className="me-1">Keep</CBadge>}
+                                                            {file.name}
+                                                        </td>
+                                                        <td className="text-muted text-truncate" style={{ maxWidth: '540px' }} title={file.path}>
+                                                            {file.path}
+                                                        </td>
+                                                        <td className="text-end text-muted">{file.size_h}</td>
+                                                        <td className="text-muted">{formatUnixTime(file.modified_unix_secs)}</td>
+                                                        <td>
+                                                            <CButton size="sm" color="light" className="py-0 px-1" onClick={() => copyPath(file.path)} title="Copy path">
+                                                                <CIcon icon={cilCopy} size="sm" />
+                                                            </CButton>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
                                 </div>
-                            </CCollapse>
-                        </div>
-                    ))}
-                </div>
-            ) : scanResult ? (
-                <div className="text-center text-muted py-4">No duplicates found.</div>
-            ) : !scanning ? (
-                <div className="text-center text-muted py-4">
-                    <CIcon icon={cilCopy} size="3xl" className="mb-3 text-muted" />
-                    <h6>Duplicate Finder</h6>
-                    <p>{hasData ? 'Click "Find Duplicates" to hash files from the current scan snapshot.' : 'Scan a directory before finding duplicates.'}</p>
-                    <p className="small">Uses parallel hashing with incremental cache reuse for faster repeat scans.</p>
-                </div>
-            ) : null}
+                            );
+                        })}
+
+                        {visibleGroups < groups.length && (
+                            <div className="text-center py-2">
+                                <CButton size="sm" color="outline-secondary" onClick={() => setVisibleGroups((count) => count + PAGE_SIZE)}>
+                                    Show More ({groups.length - visibleGroups} remaining)
+                                </CButton>
+                            </div>
+                        )}
+                    </div>
+                ) : result ? (
+                    <div className="d-flex align-items-center justify-content-center h-100 text-muted">
+                        No duplicate candidates found.
+                    </div>
+                ) : (
+                    <div className="d-flex align-items-center justify-content-center h-100 text-muted">
+                        Run duplicate detection on the current snapshot.
+                    </div>
+                )}
+            </div>
         </div>
     );
+}
+
+function formatUnixTime(value) {
+    if (value == null) return '-';
+    return new Date(value * 1000).toLocaleString();
+}
+
+function pruneDeletedPaths(result, deletedPaths) {
+    if (!result) return result;
+
+    const groups = (result.groups || [])
+        .map((group) => ({
+            ...group,
+            files: group.files.filter((file) => !deletedPaths.has(file.path)),
+        }))
+        .filter((group) => group.files.length > 1)
+        .map((group) => {
+            const wastedSpace = group.files.slice(1).reduce((sum, file) => sum + (file.size || 0), 0);
+            return {
+                ...group,
+                wasted_space: wastedSpace,
+                wasted_space_h: formatBytes(wastedSpace),
+                total_size: group.files.reduce((sum, file) => sum + (file.size || 0), 0),
+                total_size_h: formatBytes(group.files.reduce((sum, file) => sum + (file.size || 0), 0)),
+            };
+        });
+
+    const totalDuplicates = groups.reduce((sum, group) => sum + Math.max(0, group.files.length - 1), 0);
+    const totalWastedSpace = groups.reduce((sum, group) => sum + group.wasted_space, 0);
+
+    return {
+        ...result,
+        groups,
+        total_groups: groups.length,
+        total_duplicates: totalDuplicates,
+        total_wasted_space: totalWastedSpace,
+        total_wasted_space_h: formatBytes(totalWastedSpace),
+    };
 }

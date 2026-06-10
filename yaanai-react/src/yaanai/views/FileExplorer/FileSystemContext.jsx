@@ -137,25 +137,6 @@ export const FileSystemProvider = ({ children }) => {
         }
     };
 
-    // --- True Duplicate Detection (SHA256) ---
-
-    const findTrueDuplicates = async (folderPath) => {
-        const folder = folderPath || currentPath;
-        setLoading(true);
-        setProgressText("Finding duplicates (hashing files)...");
-        try {
-            const result = await invoke("find_true_duplicates", { folderName: folder });
-            setProgressText(`Found ${result.total_duplicates} duplicates wasting ${result.total_wasted_space_h}`);
-            return result;
-        } catch (error) {
-            console.error("Duplicate detection failed:", error);
-            setProgressText("Duplicate scan failed");
-            throw error;
-        } finally {
-            setLoading(false);
-        }
-    };
-
     // --- File Search ---
 
     const searchFiles = async (pattern, options = {}) => {
@@ -304,7 +285,6 @@ export const FileSystemProvider = ({ children }) => {
         scanDirectory,
         analyzeDiskUsage,
         listFiles,
-        findTrueDuplicates,
         searchFiles,
         deleteFiles,
         exportReport,

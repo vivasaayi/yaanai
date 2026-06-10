@@ -19,7 +19,6 @@ tauri = { version = "2.5", features = [] }
 tauri-plugin-dialog = "2"
 yaanaiapp = { path = "../../yaanai-app" }
 tokio = { version = "1.0", features = ["full"] }
-rayon = "1.7"
 
 [features]
 # by default Tauri runs in production mode

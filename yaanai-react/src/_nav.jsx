@@ -40,12 +40,6 @@ const _nav = [
   },
   {
     component: CNavItem,
-    name: 'Duplicate Finder',
-    to: '/file-map',
-    icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,
-  },
-  {
-    component: CNavItem,
     name: 'Settings',
     to: '/settings',
     icon: <CIcon icon={cilDrop} customClassName="nav-icon" />,

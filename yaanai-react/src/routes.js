@@ -9,7 +9,6 @@ const Contacts = React.lazy(() => import('./yaanai/views/Contacts'))
 const FileExplorer = React.lazy(() => import('./yaanai/views/FileExplorer/FileExplorer'))
 const DiskAnalyzer = React.lazy(() => import('./yaanai/views/FileExplorer/DiskAnalyzer'))
 const TreeBuilder = React.lazy(() => import('./yaanai/views/FileExplorer/TreeBuilder'))
-const FileMap = React.lazy(() => import('./yaanai/views/FileExplorer/FileMap'))
 const Settings = React.lazy(() => import('./yaanai/views/Settings/Settings'))
 
 // Base
@@ -107,7 +106,6 @@ const routes = [
   { path: '/file-explorer', name: 'File Explorer', element: FileExplorer },
   { path: '/disk-analyzer', name: 'Disk Analyzer', element: DiskAnalyzer },
   { path: '/file-tree', name: 'File Tree', element: TreeBuilder },
-  { path: '/file-map', name: 'File Map', element: FileMap },
   { path: '/settings', name: 'Settings', element: Settings },
 ]
 

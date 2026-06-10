@@ -113,19 +113,6 @@ impl FileManager {
         Ok(tree)
     }
 
-    pub async fn get_duplicates_async(
-        &self,
-    ) -> Result<Vec<crate::recursive_tree_builder::TreeNode>, String> {
-        // Use cached tree if available, otherwise return error
-        if self.cached_tree.lock().unwrap().is_some() {
-            // For now, we need to rebuild to get duplicates since the tree builder state is not cached
-            // In a full implementation, we'd cache the tree builder state as well
-            RecursiveFileTreeBuilder::new().get_duplicates_async().await
-        } else {
-            Err("No tree data available. Please scan a directory first.".to_string())
-        }
-    }
-
     pub async fn analyze_disk_usage_async(
         &self,
         folder_name: String,

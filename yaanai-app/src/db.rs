@@ -1,6 +1,5 @@
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -30,19 +29,10 @@ pub struct ScanRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileHashRecord {
-    pub path: String,
-    pub hash: String,
-    pub size: i64,
-    pub mtime: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbStats {
     pub favorites_count: i64,
     pub ignore_patterns_count: i64,
     pub scan_records_count: i64,
-    pub cached_hashes_count: i64,
 }
 
 pub struct Database {
@@ -59,8 +49,8 @@ impl Database {
                 .map_err(|e| format!("Failed to create db directory: {}", e))?;
         }
 
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn =
+            Connection::open(&db_path).map_err(|e| format!("Failed to open database: {}", e))?;
 
         let db = Database {
             conn: Mutex::new(conn),
@@ -102,18 +92,12 @@ impl Database {
                 scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
-            CREATE TABLE IF NOT EXISTS file_hashes (
-                path TEXT PRIMARY KEY,
-                hash TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                mtime INTEGER NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
-            );"
-        ).map_err(|e| format!("Failed to create tables: {}", e))
+            );",
+        )
+        .map_err(|e| format!("Failed to create tables: {}", e))
     }
 
     fn seed_default_ignore_patterns(&self) -> Result<(), String> {
@@ -124,10 +108,24 @@ impl Database {
 
         if count == 0 {
             let defaults = vec![
-                ".git", "node_modules", ".npm", ".cargo", ".rustup",
-                ".m2", ".gradle", ".nuget", ".vscode", "target/debug",
-                "target/release", "__pycache__", ".DS_Store", "*.tmp",
-                "bin/Debug", "bin/Release", "obj/Debug", "obj/Release",
+                ".git",
+                "node_modules",
+                ".npm",
+                ".cargo",
+                ".rustup",
+                ".m2",
+                ".gradle",
+                ".nuget",
+                ".vscode",
+                "target/debug",
+                "target/release",
+                "__pycache__",
+                ".DS_Store",
+                "*.tmp",
+                "bin/Debug",
+                "bin/Release",
+                "obj/Debug",
+                "obj/Release",
             ];
             for pattern in defaults {
                 let _ = conn.execute(
@@ -195,7 +193,8 @@ impl Database {
         conn.execute(
             "INSERT OR IGNORE INTO ignore_patterns (pattern) VALUES (?1)",
             params![pattern],
-        ).map_err(|e| format!("Failed to add ignore pattern: {}", e))?;
+        )
+        .map_err(|e| format!("Failed to add ignore pattern: {}", e))?;
 
         let id = conn.last_insert_rowid();
         Ok(IgnorePattern {
@@ -230,8 +229,11 @@ impl Database {
 
     pub fn remove_ignore_pattern(&self, pattern: &str) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM ignore_patterns WHERE pattern = ?1", params![pattern])
-            .map_err(|e| format!("Failed to remove ignore pattern: {}", e))?;
+        conn.execute(
+            "DELETE FROM ignore_patterns WHERE pattern = ?1",
+            params![pattern],
+        )
+        .map_err(|e| format!("Failed to remove ignore pattern: {}", e))?;
         Ok(())
     }
 
@@ -283,113 +285,6 @@ impl Database {
         Ok(records)
     }
 
-    // --- File Hashes (for incremental duplicate detection) ---
-
-    pub fn save_file_hash(&self, path: &str, hash: &str, size: i64, mtime: i64) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR REPLACE INTO file_hashes (path, hash, size, mtime) VALUES (?1, ?2, ?3, ?4)",
-            params![path, hash, size, mtime],
-        ).map_err(|e| format!("Failed to save file hash: {}", e))?;
-        Ok(())
-    }
-
-    pub fn get_file_hash(&self, path: &str) -> Result<Option<FileHashRecord>, String> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT path, hash, size, mtime FROM file_hashes WHERE path = ?1")
-            .map_err(|e| format!("Failed to prepare file hash query: {}", e))?;
-
-        let result = stmt
-            .query_row(params![path], |row| {
-                Ok(FileHashRecord {
-                    path: row.get(0)?,
-                    hash: row.get(1)?,
-                    size: row.get(2)?,
-                    mtime: row.get(3)?,
-                })
-            });
-
-        match result {
-            Ok(record) => Ok(Some(record)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(format!("Failed to get file hash: {}", e)),
-        }
-    }
-
-    pub fn get_file_hashes(&self, paths: &[String]) -> Result<HashMap<String, FileHashRecord>, String> {
-        let conn = self.conn.lock().unwrap();
-        let mut hashes = HashMap::new();
-
-        for chunk in paths.chunks(500) {
-            if chunk.is_empty() {
-                continue;
-            }
-
-            let placeholders = vec!["?"; chunk.len()].join(", ");
-            let query = format!(
-                "SELECT path, hash, size, mtime FROM file_hashes WHERE path IN ({})",
-                placeholders
-            );
-
-            let mut stmt = conn
-                .prepare(&query)
-                .map_err(|e| format!("Failed to prepare file hash query: {}", e))?;
-
-            let rows = stmt
-                .query_map(params_from_iter(chunk.iter()), |row| {
-                    Ok(FileHashRecord {
-                        path: row.get(0)?,
-                        hash: row.get(1)?,
-                        size: row.get(2)?,
-                        mtime: row.get(3)?,
-                    })
-                })
-                .map_err(|e| format!("Failed to query file hashes: {}", e))?;
-
-            for row in rows {
-                let record = row.map_err(|e| format!("Row error: {}", e))?;
-                hashes.insert(record.path.clone(), record);
-            }
-        }
-
-        Ok(hashes)
-    }
-
-    pub fn remove_stale_file_hashes(&self, root: &str, existing_paths: &HashSet<String>) -> Result<usize, String> {
-        let conn = self.conn.lock().unwrap();
-        let like_pattern = format!("{}/%", root.trim_end_matches('/'));
-        let mut stmt = conn
-            .prepare("SELECT path FROM file_hashes WHERE path = ?1 OR path LIKE ?2")
-            .map_err(|e| format!("Failed to prepare stale hash query: {}", e))?;
-
-        let rows = stmt
-            .query_map(params![root, like_pattern], |row| row.get::<_, String>(0))
-            .map_err(|e| format!("Failed to query stale hashes: {}", e))?;
-
-        let mut stale_paths = Vec::new();
-        for row in rows {
-            let path = row.map_err(|e| format!("Row error: {}", e))?;
-            if !existing_paths.contains(&path) {
-                stale_paths.push(path);
-            }
-        }
-
-        for path in &stale_paths {
-            conn.execute("DELETE FROM file_hashes WHERE path = ?1", params![path])
-                .map_err(|e| format!("Failed to remove stale file hash: {}", e))?;
-        }
-
-        Ok(stale_paths.len())
-    }
-
-    pub fn clear_file_hashes(&self) -> Result<(), String> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM file_hashes", [])
-            .map_err(|e| format!("Failed to clear file hashes: {}", e))?;
-        Ok(())
-    }
-
     // --- Settings ---
 
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, String> {
@@ -411,7 +306,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
             params![key, value],
-        ).map_err(|e| format!("Failed to set setting: {}", e))?;
+        )
+        .map_err(|e| format!("Failed to set setting: {}", e))?;
         Ok(())
     }
 
@@ -428,15 +324,10 @@ impl Database {
         let scan_records_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM scan_records", [], |row| row.get(0))
             .unwrap_or(0);
-        let cached_hashes_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM file_hashes", [], |row| row.get(0))
-            .unwrap_or(0);
-
         Ok(DbStats {
             favorites_count,
             ignore_patterns_count,
             scan_records_count,
-            cached_hashes_count,
         })
     }
 }

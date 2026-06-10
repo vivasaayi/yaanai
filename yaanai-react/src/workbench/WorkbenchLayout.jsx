@@ -39,11 +39,13 @@ function WorkbenchShell() {
                 '1': 'overview',
                 '2': 'browser',
                 '3': 'disk',
-                '4': 'duplicates',
-                '5': 'search',
-                '6': 'settings',
-                d: 'duplicates',
+                '4': 'search',
+                '5': 'duplicates',
+                '6': 'cleanup',
+                '7': 'settings',
                 f: 'search',
+                d: 'duplicates',
+                k: 'cleanup',
             };
 
             if (shortcuts[key]) {

@@ -12,17 +12,19 @@ import { CNav, CNavItem, CNavLink, CBadge } from '@coreui/react';
 // Tools
 import OverviewTool from '../tools/OverviewTool';
 import FileBrowserTool from '../tools/FileBrowserTool';
-import DuplicateTool from '../tools/DuplicateTool';
 import SearchTool from '../tools/SearchTool';
 import DiskUsageTool from '../tools/DiskUsageTool';
+import DuplicateTool from '../tools/DuplicateTool';
+import CleanupTool from '../tools/CleanupTool';
 import SettingsTool from '../tools/SettingsTool';
 
 const TABS = [
     { id: 'overview',    label: 'Overview',    needsData: false },
     { id: 'browser',     label: 'Files',       needsData: false },
     { id: 'disk',        label: 'Disk Usage',  needsData: true },
-    { id: 'duplicates',  label: 'Duplicates',  needsData: false },
     { id: 'search',      label: 'Search',      needsData: false },
+    { id: 'duplicates',  label: 'Duplicates',  needsData: true },
+    { id: 'cleanup',     label: 'Cleanup',     needsData: true },
     { id: 'settings',    label: 'Settings',    needsData: false },
 ];
 
@@ -67,8 +69,9 @@ export default function ToolTabs() {
                 {activeTab === 'overview' && <OverviewTool />}
                 {activeTab === 'browser' && <FileBrowserTool />}
                 {activeTab === 'disk' && <DiskUsageTool />}
-                {activeTab === 'duplicates' && <DuplicateTool />}
                 {activeTab === 'search' && <SearchTool />}
+                {activeTab === 'duplicates' && <DuplicateTool />}
+                {activeTab === 'cleanup' && <CleanupTool />}
                 {activeTab === 'settings' && <SettingsTool />}
             </div>
         </div>

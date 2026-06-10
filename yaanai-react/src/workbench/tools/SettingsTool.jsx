@@ -149,7 +149,6 @@ export default function SettingsTool() {
                                 { label: 'Favorites', value: dbStats.favorites_count },
                                 { label: 'Ignore Patterns', value: dbStats.ignore_patterns_count },
                                 { label: 'Scan Records', value: dbStats.scan_records_count },
-                                { label: 'Cached Hashes', value: dbStats.cached_hashes_count },
                             ].map((s) => (
                                 <div key={s.label} className="col-md-3">
                                     <div className="border rounded p-3 text-center">
@@ -200,10 +199,11 @@ export default function SettingsTool() {
 
                     <div className="border rounded p-3">
                         <div className="fw-semibold mb-2">Keyboard Shortcuts</div>
-                        <div className="small text-muted mb-1">Cmd/Ctrl+D: open Duplicates</div>
                         <div className="small text-muted mb-1">Cmd/Ctrl+F: open Search</div>
+                        <div className="small text-muted mb-1">Cmd/Ctrl+D: open Duplicates</div>
+                        <div className="small text-muted mb-1">Cmd/Ctrl+K: open Cleanup</div>
                         <div className="small text-muted mb-1">Cmd/Ctrl+R: rescan current path</div>
-                        <div className="small text-muted">Cmd/Ctrl+1-6: switch workbench tabs</div>
+                        <div className="small text-muted">Cmd/Ctrl+1-7: switch workbench tabs</div>
                     </div>
                 </CTabPane>
             </CTabContent>
