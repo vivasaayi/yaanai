@@ -6,6 +6,7 @@
 extern crate yaanaiapp;
 
 use serde::Serialize;
+use std::process::Command;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use std::{fs, path::Path};
@@ -209,6 +210,57 @@ async fn delete_files(
 #[tauri::command]
 fn get_files_info(paths: Vec<String>) -> Vec<file_operations::FileInfo> {
     file_operations::get_files_info(&paths)
+}
+
+#[tauri::command]
+fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Path is required".to_string());
+    }
+
+    let target = Path::new(trimmed_path);
+    if !target.exists() {
+        return Err(format!("Path does not exist: {}", trimmed_path));
+    }
+
+    let status = reveal_path(target, trimmed_path)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("File manager exited with status: {}", status))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_path(_target: &Path, path: &str) -> Result<std::process::ExitStatus, String> {
+    Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map_err(|e| format!("Failed to reveal in Finder: {}", e))
+}
+
+#[cfg(target_os = "windows")]
+fn reveal_path(_target: &Path, path: &str) -> Result<std::process::ExitStatus, String> {
+    Command::new("explorer")
+        .arg(format!("/select,{}", path))
+        .status()
+        .map_err(|e| format!("Failed to reveal in Explorer: {}", e))
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn reveal_path(target: &Path, _path: &str) -> Result<std::process::ExitStatus, String> {
+    let open_target = if target.is_dir() {
+        target
+    } else {
+        target.parent().unwrap_or(target)
+    };
+
+    Command::new("xdg-open")
+        .arg(open_target)
+        .status()
+        .map_err(|e| format!("Failed to open file manager: {}", e))
 }
 
 // --- Export ---
@@ -418,6 +470,7 @@ fn main() {
             // File operations
             delete_files,
             get_files_info,
+            reveal_in_file_manager,
             // Export
             export_report,
             export_tree_snapshot,

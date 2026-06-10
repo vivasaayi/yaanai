@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { CBadge, CButton, CProgress, CProgressBar } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilCopy, cilFile, cilFolder, cilStorage, cilTrash } from '@coreui/icons';
+import { cilCopy, cilExternalLink, cilFile, cilFolder, cilStorage, cilTrash } from '@coreui/icons';
 import { useScanState } from '../state/ScanStateContext';
 import { formatBytes } from '../utils/treeAnalysis';
+import { revealInFinder } from '../utils/fileActions';
 import {
     buildCleanupRecommendations,
     categoryOrder,
@@ -129,6 +130,14 @@ export default function CleanupTool() {
         }
     }
 
+    async function handleReveal(path) {
+        try {
+            await revealInFinder(path);
+        } catch (error) {
+            console.error('Reveal failed:', error);
+        }
+    }
+
     if (!hasData) {
         return (
             <div className="d-flex align-items-center justify-content-center h-100 text-muted">
@@ -222,7 +231,7 @@ export default function CleanupTool() {
                                 <th>Path</th>
                                 <th style={{ width: '100px', textAlign: 'right' }}>Size</th>
                                 <th style={{ width: '90px' }}>Confidence</th>
-                                <th style={{ width: '48px' }}></th>
+                                <th style={{ width: '74px' }}></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -258,9 +267,14 @@ export default function CleanupTool() {
                                             </CBadge>
                                         </td>
                                         <td>
-                                            <CButton size="sm" color="light" className="py-0 px-1" onClick={() => copyPath(item.path)} title="Copy path">
-                                                <CIcon icon={cilCopy} size="sm" />
-                                            </CButton>
+                                            <div className="d-flex gap-1">
+                                                <CButton size="sm" color="light" className="py-0 px-1" onClick={() => handleReveal(item.path)} title="Reveal in Finder">
+                                                    <CIcon icon={cilExternalLink} size="sm" />
+                                                </CButton>
+                                                <CButton size="sm" color="light" className="py-0 px-1" onClick={() => copyPath(item.path)} title="Copy path">
+                                                    <CIcon icon={cilCopy} size="sm" />
+                                                </CButton>
+                                            </div>
                                         </td>
                                     </tr>
                                 );

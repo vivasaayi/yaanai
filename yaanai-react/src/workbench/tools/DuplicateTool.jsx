@@ -9,12 +9,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { useScanState } from '../state/ScanStateContext';
 import { CBadge, CButton, CFormCheck, CProgress, CProgressBar } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilCopy, cilFile, cilMediaStop, cilSearch, cilTrash } from '@coreui/icons';
+import { cilCopy, cilExternalLink, cilFile, cilMediaStop, cilSearch, cilTrash } from '@coreui/icons';
 import {
     DUPLICATE_MATCH_MODES,
     buildMetadataDuplicateGroupsAsync,
     formatBytes,
 } from '../utils/treeAnalysis';
+import { revealInFinder } from '../utils/fileActions';
 
 const confidenceColor = {
     strong: 'success',
@@ -201,6 +202,14 @@ export default function DuplicateTool() {
         }
     }
 
+    async function handleReveal(path) {
+        try {
+            await revealInFinder(path);
+        } catch (error) {
+            console.error('Reveal failed:', error);
+        }
+    }
+
     const progressPercent = currentSnapshot?.fileCount && progress
         ? Math.min(100, Math.round((progress.filesScanned / currentSnapshot.fileCount) * 100))
         : 0;
@@ -379,7 +388,7 @@ export default function DuplicateTool() {
                                                     <th>Path</th>
                                                     <th style={{ width: '100px', textAlign: 'right' }}>Size</th>
                                                     <th style={{ width: '150px' }}>Modified</th>
-                                                    <th style={{ width: '44px' }}></th>
+                                                    <th style={{ width: '74px' }}></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -403,9 +412,14 @@ export default function DuplicateTool() {
                                                         <td className="text-end text-muted">{file.size_h}</td>
                                                         <td className="text-muted">{formatUnixTime(file.modified_unix_secs)}</td>
                                                         <td>
-                                                            <CButton size="sm" color="light" className="py-0 px-1" onClick={() => copyPath(file.path)} title="Copy path">
-                                                                <CIcon icon={cilCopy} size="sm" />
-                                                            </CButton>
+                                                            <div className="d-flex gap-1">
+                                                                <CButton size="sm" color="light" className="py-0 px-1" onClick={() => handleReveal(file.path)} title="Reveal in Finder">
+                                                                    <CIcon icon={cilExternalLink} size="sm" />
+                                                                </CButton>
+                                                                <CButton size="sm" color="light" className="py-0 px-1" onClick={() => copyPath(file.path)} title="Copy path">
+                                                                    <CIcon icon={cilCopy} size="sm" />
+                                                                </CButton>
+                                                            </div>
                                                         </td>
                                                     </tr>
                                                 ))}

@@ -6,10 +6,11 @@
  */
 
 import React, { useState } from 'react';
-import { useScanState, ScanStatus } from '../state/ScanStateContext';
+import { useScanState } from '../state/ScanStateContext';
 import { CBadge, CButton } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilStar, cilHistory, cilFolder, cilFile, cilTrash, cilChevronRight, cilChevronBottom } from '@coreui/icons';
+import { cilStar, cilHistory, cilFolder, cilTrash, cilChevronRight, cilChevronBottom, cilExternalLink } from '@coreui/icons';
+import { revealInFinder } from '../utils/fileActions';
 
 function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
@@ -33,6 +34,7 @@ function TreeNodeItem({ node, depth = 0 }) {
     const isDir = node.node_type === 'directory';
     const hasChildren = node.children && node.children.length > 0;
     const name = node.disk_entry?.path?.split('/').pop() || 'root';
+    const path = node.disk_entry?.path;
 
     if (!isDir && depth > 0) {
         return null; // Only show directories in left panel tree
@@ -48,21 +50,35 @@ function TreeNodeItem({ node, depth = 0 }) {
     return (
         <div>
             <div
-                className="d-flex align-items-center py-1 px-1 tree-node-hover"
-                style={{ paddingLeft: `${depth * 12 + 4}px`, cursor: hasChildren ? 'pointer' : 'default', fontSize: '12px' }}
+                className="left-tree-row tree-node-hover"
+                style={{ cursor: hasChildren ? 'pointer' : 'default' }}
                 onClick={() => hasChildren && setExpanded(!expanded)}
             >
+                <span className="left-tree-indent" style={{ width: `${depth * 18}px` }} />
                 {hasChildren ? (
                     <CIcon icon={expanded ? cilChevronBottom : cilChevronRight}
-                        size="sm" className="me-1 text-muted" style={{ width: '12px' }} />
+                        size="sm" className="left-tree-toggle text-muted" />
                 ) : (
-                    <span style={{ width: '16px', display: 'inline-block' }} />
+                    <span className="left-tree-toggle" />
                 )}
-                <CIcon icon={cilFolder} size="sm" className="me-1 text-warning" />
-                <span className="text-truncate flex-grow-1" title={name}>{name}</span>
-                <span className="text-muted ms-1" style={{ fontSize: '10px', whiteSpace: 'nowrap' }}>
+                <CIcon icon={cilFolder} size="sm" className="left-tree-folder text-warning" />
+                <span className="left-tree-name text-truncate" title={path || name}>{name}</span>
+                <span className="left-tree-size text-muted">
                     {formatBytes(node.disk_entry?.size)}
                 </span>
+                <CButton
+                    size="sm"
+                    color="light"
+                    className="left-tree-reveal p-0 border-0"
+                    title="Reveal in Finder"
+                    disabled={!path}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        revealInFinder(path).catch((error) => console.error('Reveal failed:', error));
+                    }}
+                >
+                    <CIcon icon={cilExternalLink} size="sm" />
+                </CButton>
             </div>
             {expanded && childDirs.map((child, i) => (
                 <TreeNodeItem key={child.disk_entry?.path || i} node={child} depth={depth + 1} />

@@ -148,16 +148,22 @@ export default function ScanController() {
 
             {/* Row 2: Progress bar (only during scanning) */}
             {isScanning && (
-                <div className="mt-2">
+                <div className="scan-progress-shell mt-2">
                     <CProgress thin className="mb-1">
                         <CProgressBar animated color="info" value={progressPercent} />
                     </CProgress>
-                    <div className="d-flex justify-content-between" style={{ fontSize: '11px' }}>
-                        <span className="text-muted">{scanProgressText}</span>
+                    <div className="scan-progress-meta">
+                        <div
+                            className="scan-progress-path text-muted"
+                            title={scanProgress?.current_path || scanProgressText}
+                        >
+                            Scanning: {scanProgress?.current_path || scanProgressText}
+                        </div>
                         {scanProgress && (
-                            <span className="text-muted">
-                                {scanProgress.files_processed} files &middot; {scanProgress.directories_processed} dirs
-                            </span>
+                            <div className="scan-progress-counts text-muted">
+                                <span>{scanProgress.files_processed.toLocaleString()} files</span>
+                                <span>{scanProgress.directories_processed.toLocaleString()} dirs</span>
+                            </div>
                         )}
                     </div>
                 </div>

@@ -9,8 +9,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { useScanState } from '../state/ScanStateContext';
 import { CButton, CBadge, CFormCheck } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilFile, cilFolder, cilSearch, cilTrash } from '@coreui/icons';
+import { cilExternalLink, cilFile, cilFolder, cilSearch, cilTrash } from '@coreui/icons';
 import { searchTree } from '../utils/treeAnalysis';
+import { revealInFinder } from '../utils/fileActions';
 
 export default function SearchTool() {
     const { currentSnapshot, hasData } = useScanState();
@@ -87,6 +88,14 @@ export default function SearchTool() {
             console.error("Delete failed:", e);
         }
         setDeleting(false);
+    }
+
+    async function handleReveal(path) {
+        try {
+            await revealInFinder(path);
+        } catch (error) {
+            console.error("Reveal failed:", error);
+        }
     }
 
     const items = results?.results || [];
@@ -179,6 +188,7 @@ export default function SearchTool() {
                                 <th>Path</th>
                                 <th style={{ width: '80px', textAlign: 'right' }}>Size</th>
                                 <th style={{ width: '60px' }}>Match</th>
+                                <th style={{ width: '44px' }}></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -200,6 +210,17 @@ export default function SearchTool() {
                                     </td>
                                     <td className="text-end text-muted">{item.size_h}</td>
                                     <td><CBadge color="info" size="sm">{item.matched_on}</CBadge></td>
+                                    <td>
+                                        <CButton
+                                            size="sm"
+                                            color="light"
+                                            className="py-0 px-1"
+                                            onClick={() => handleReveal(item.path)}
+                                            title="Reveal in Finder"
+                                        >
+                                            <CIcon icon={cilExternalLink} size="sm" />
+                                        </CButton>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>

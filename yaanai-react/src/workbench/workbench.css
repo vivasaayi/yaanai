@@ -160,9 +160,151 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
+.scan-progress-shell {
+    min-height: 42px;
+}
+
+.scan-progress-meta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 190px;
+    gap: 12px;
+    align-items: start;
+    min-height: 34px;
+    font-size: 11px;
+}
+
+.scan-progress-path {
+    display: -webkit-box;
+    min-height: 32px;
+    max-height: 32px;
+    overflow: hidden;
+    line-height: 16px;
+    word-break: break-all;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.scan-progress-counts {
+    display: grid;
+    grid-template-rows: 16px 16px;
+    justify-items: end;
+    min-width: 190px;
+    line-height: 16px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 /* Left panel */
 .left-panel {
     transition: width 0.2s ease;
+}
+
+.left-tree-row {
+    display: grid;
+    grid-template-columns: auto 16px 18px minmax(0, 1fr) 66px 20px;
+    align-items: center;
+    gap: 2px;
+    min-height: 28px;
+    padding: 2px 4px;
+    font-size: 12px;
+}
+
+.left-tree-toggle {
+    display: inline-flex;
+    width: 16px;
+    justify-content: center;
+}
+
+.left-tree-folder {
+    width: 18px;
+}
+
+.left-tree-name {
+    min-width: 0;
+}
+
+.left-tree-size {
+    justify-self: end;
+    white-space: nowrap;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.left-tree-reveal {
+    opacity: 0;
+}
+
+.left-tree-row:hover .left-tree-reveal,
+.left-tree-reveal:focus {
+    opacity: 1;
+}
+
+.file-browser-content {
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.file-browser-table-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: auto;
+}
+
+.file-browser-table {
+    table-layout: fixed;
+    font-size: 12px;
+}
+
+.file-browser-table tbody tr {
+    height: 34px;
+}
+
+.file-name-cell {
+    overflow: hidden;
+}
+
+.file-row-name {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-row-name.is-folder {
+    cursor: pointer;
+}
+
+.file-preview-panel {
+    flex: 0 0 320px;
+    width: 320px;
+    border-left: 1px solid var(--workbench-border);
+    background: var(--workbench-surface);
+    padding: 12px;
+    overflow: auto;
+}
+
+.file-preview-frame {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border: 1px solid var(--workbench-border);
+    background: var(--workbench-surface-alt);
+    overflow: hidden;
+}
+
+.file-preview-image {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.file-preview-empty {
+    font-size: 12px;
 }
 
 /* Status bar */
