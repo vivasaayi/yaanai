@@ -22,6 +22,18 @@ export async function revealInFinder(path) {
     await invoke('reveal_in_file_manager', { path });
 }
 
+export async function openSystemTrash() {
+    await invoke('open_system_trash');
+}
+
+export async function openFullDiskAccessSettings() {
+    await invoke('open_full_disk_access_settings');
+}
+
+export async function getSystemTrashStats() {
+    return invoke('get_system_trash_stats');
+}
+
 export function isImagePath(path) {
     const ext = fileExtension(path);
     return IMAGE_EXTENSIONS.has(ext);

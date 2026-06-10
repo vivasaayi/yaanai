@@ -9,7 +9,10 @@ use serde::Serialize;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tauri::Emitter;
 use yaanaiapp::db::Database;
 use yaanaiapp::exporter;
@@ -31,6 +34,18 @@ struct AppState {
 struct StaleCheckResult {
     stale: bool,
     changed_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrashStats {
+    available: bool,
+    access_blocked: bool,
+    total_size: u64,
+    total_size_h: String,
+    top_level_items: u64,
+    total_entries: u64,
+    roots: Vec<String>,
+    errors: Vec<String>,
 }
 
 impl AppState {
@@ -232,6 +247,33 @@ fn reveal_in_file_manager(path: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn open_system_trash() -> Result<(), String> {
+    let status = open_trash_path()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("File manager exited with status: {}", status))
+    }
+}
+
+#[tauri::command]
+fn open_full_disk_access_settings() -> Result<(), String> {
+    let status = open_full_disk_access_path()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("System Settings exited with status: {}", status))
+    }
+}
+
+#[tauri::command]
+async fn get_system_trash_stats() -> Result<TrashStats, String> {
+    tokio::task::spawn_blocking(scan_system_trash)
+        .await
+        .map_err(|e| format!("Task failed: {}", e))?
+}
+
 #[cfg(target_os = "macos")]
 fn reveal_path(_target: &Path, path: &str) -> Result<std::process::ExitStatus, String> {
     Command::new("open")
@@ -261,6 +303,234 @@ fn reveal_path(target: &Path, _path: &str) -> Result<std::process::ExitStatus, S
         .arg(open_target)
         .status()
         .map_err(|e| format!("Failed to open file manager: {}", e))
+}
+
+#[cfg(target_os = "macos")]
+fn open_trash_path() -> Result<std::process::ExitStatus, String> {
+    let home = std::env::var("HOME").map_err(|_| "Cannot determine home directory".to_string())?;
+    Command::new("open")
+        .arg(Path::new(&home).join(".Trash"))
+        .status()
+        .map_err(|e| format!("Failed to open Trash: {}", e))
+}
+
+#[cfg(target_os = "macos")]
+fn open_full_disk_access_path() -> Result<std::process::ExitStatus, String> {
+    Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+        .status()
+        .map_err(|e| format!("Failed to open Full Disk Access settings: {}", e))
+}
+
+#[cfg(target_os = "macos")]
+fn trash_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        roots.push(Path::new(&home).join(".Trash"));
+    }
+
+    if let Some(uid) = current_uid_string() {
+        if let Ok(volumes) = fs::read_dir("/Volumes") {
+            for volume in volumes.flatten() {
+                let volume_trash = volume.path().join(".Trashes").join(&uid);
+                if volume_trash.exists() {
+                    roots.push(volume_trash);
+                }
+            }
+        }
+    }
+
+    roots
+}
+
+#[cfg(target_os = "windows")]
+fn open_trash_path() -> Result<std::process::ExitStatus, String> {
+    Command::new("explorer")
+        .arg("shell:RecycleBinFolder")
+        .status()
+        .map_err(|e| format!("Failed to open Recycle Bin: {}", e))
+}
+
+#[cfg(target_os = "windows")]
+fn open_full_disk_access_path() -> Result<std::process::ExitStatus, String> {
+    open_trash_path()
+}
+
+#[cfg(target_os = "windows")]
+fn trash_roots() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn open_trash_path() -> Result<std::process::ExitStatus, String> {
+    Command::new("xdg-open")
+        .arg("trash://")
+        .status()
+        .map_err(|e| format!("Failed to open Trash: {}", e))
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn open_full_disk_access_path() -> Result<std::process::ExitStatus, String> {
+    Command::new("xdg-open")
+        .arg("trash://")
+        .status()
+        .map_err(|e| format!("Failed to open system settings: {}", e))
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+fn trash_roots() -> Vec<PathBuf> {
+    if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
+        return vec![Path::new(&xdg_data_home).join("Trash").join("files")];
+    }
+
+    std::env::var("HOME")
+        .map(|home| vec![Path::new(&home).join(".local/share/Trash/files")])
+        .unwrap_or_default()
+}
+
+fn scan_system_trash() -> Result<TrashStats, String> {
+    let mut stats = TrashStats {
+        available: false,
+        access_blocked: false,
+        total_size: 0,
+        total_size_h: "0 B".to_string(),
+        top_level_items: 0,
+        total_entries: 0,
+        roots: Vec::new(),
+        errors: Vec::new(),
+    };
+
+    for root in trash_roots() {
+        if !root.exists() {
+            continue;
+        }
+
+        stats.available = true;
+        stats.roots.push(root.to_string_lossy().to_string());
+        scan_trash_root(&root, &mut stats);
+    }
+
+    stats.total_size_h = format_byte_count(stats.total_size);
+    Ok(stats)
+}
+
+fn scan_trash_root(root: &Path, stats: &mut TrashStats) {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            note_trash_error(
+                stats,
+                &format!("Failed to read {}: {}", root.display(), error),
+                &error,
+            );
+            return;
+        }
+    };
+
+    let mut stack = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => {
+                stats.top_level_items += 1;
+                stack.push(entry.path());
+            }
+            Err(error) => note_trash_error(
+                stats,
+                &format!("Trash entry error in {}: {}", root.display(), error),
+                &error,
+            ),
+        }
+    }
+
+    while let Some(path) = stack.pop() {
+        stats.total_entries += 1;
+
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                note_trash_error(
+                    stats,
+                    &format!("Failed to read {}: {}", path.display(), error),
+                    &error,
+                );
+                continue;
+            }
+        };
+
+        if metadata.is_file() || metadata.file_type().is_symlink() {
+            stats.total_size = stats.total_size.saturating_add(metadata.len());
+            continue;
+        }
+
+        if metadata.is_dir() {
+            let children = match fs::read_dir(&path) {
+                Ok(children) => children,
+                Err(error) => {
+                    note_trash_error(
+                        stats,
+                        &format!("Failed to read {}: {}", path.display(), error),
+                        &error,
+                    );
+                    continue;
+                }
+            };
+
+            for child in children {
+                match child {
+                    Ok(child) => stack.push(child.path()),
+                    Err(error) => note_trash_error(
+                        stats,
+                        &format!("Trash entry error in {}: {}", path.display(), error),
+                        &error,
+                    ),
+                }
+            }
+        }
+    }
+}
+
+fn note_trash_error(stats: &mut TrashStats, message: &str, error: &std::io::Error) {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        stats.access_blocked = true;
+    }
+    stats.errors.push(message.to_string());
+}
+
+fn format_byte_count(bytes: u64) -> String {
+    const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
+    if bytes == 0 {
+        return "0 B".to_string();
+    }
+
+    let mut value = bytes as f64;
+    let mut unit_index = 0;
+    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+
+    if unit_index == 0 {
+        format!("{} {}", bytes, UNITS[unit_index])
+    } else {
+        format!("{:.1} {}", value, UNITS[unit_index])
+    }
+}
+
+#[cfg(unix)]
+fn current_uid_string() -> Option<String> {
+    let output = Command::new("id").arg("-u").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|uid| uid.trim().to_string())
+        .filter(|uid| !uid.is_empty())
+}
+
+#[cfg(not(unix))]
+fn current_uid_string() -> Option<String> {
+    None
 }
 
 // --- Export ---
@@ -471,6 +741,9 @@ fn main() {
             delete_files,
             get_files_info,
             reveal_in_file_manager,
+            open_system_trash,
+            open_full_disk_access_settings,
+            get_system_trash_stats,
             // Export
             export_report,
             export_tree_snapshot,

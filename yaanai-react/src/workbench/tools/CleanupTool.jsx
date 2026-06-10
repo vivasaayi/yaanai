@@ -2,10 +2,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { CBadge, CButton, CProgress, CProgressBar } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilCopy, cilExternalLink, cilFile, cilFolder, cilStorage, cilTrash } from '@coreui/icons';
+import { cilCopy, cilExternalLink, cilFile, cilFolder, cilFolderOpen, cilStorage, cilSync, cilTrash } from '@coreui/icons';
 import { useScanState } from '../state/ScanStateContext';
 import { formatBytes } from '../utils/treeAnalysis';
-import { revealInFinder } from '../utils/fileActions';
+import {
+    getSystemTrashStats,
+    openFullDiskAccessSettings,
+    openSystemTrash,
+    revealInFinder,
+} from '../utils/fileActions';
 import {
     buildCleanupRecommendations,
     categoryOrder,
@@ -26,6 +31,8 @@ export default function CleanupTool() {
     const [confidenceFilter, setConfidenceFilter] = useState('all');
     const [trashing, setTrashing] = useState(false);
     const [lastResult, setLastResult] = useState(null);
+    const [trashStats, setTrashStats] = useState(null);
+    const [trashStatsLoading, setTrashStatsLoading] = useState(false);
 
     const allRecommendations = useMemo(() => {
         if (!currentSnapshot?.tree) return [];
@@ -39,6 +46,12 @@ export default function CleanupTool() {
         setCategoryFilter('all');
         setConfidenceFilter('all');
     }, [currentSnapshot?.version]);
+
+    useEffect(() => {
+        if (hasData) {
+            refreshTrashStats();
+        }
+    }, [hasData]);
 
     const recommendations = useMemo(
         () => allRecommendations.filter((item) => !removedPaths.has(item.path)),
@@ -111,6 +124,7 @@ export default function CleanupTool() {
                 return next;
             });
             setLastResult(result);
+            refreshTrashStats();
         } catch (error) {
             setLastResult({
                 deleted: [],
@@ -138,6 +152,42 @@ export default function CleanupTool() {
         }
     }
 
+    async function refreshTrashStats() {
+        setTrashStatsLoading(true);
+        try {
+            setTrashStats(await getSystemTrashStats());
+        } catch (error) {
+            setTrashStats({
+                available: false,
+                access_blocked: false,
+                total_size: 0,
+                total_size_h: 'Unavailable',
+                top_level_items: 0,
+                total_entries: 0,
+                roots: [],
+                errors: [String(error)],
+            });
+        } finally {
+            setTrashStatsLoading(false);
+        }
+    }
+
+    async function handleGrantTrashAccess() {
+        try {
+            await openFullDiskAccessSettings();
+        } catch (error) {
+            console.error('Open Full Disk Access settings failed:', error);
+        }
+    }
+
+    async function handleOpenTrash() {
+        try {
+            await openSystemTrash();
+        } catch (error) {
+            console.error('Open Trash failed:', error);
+        }
+    }
+
     if (!hasData) {
         return (
             <div className="d-flex align-items-center justify-content-center h-100 text-muted">
@@ -159,6 +209,28 @@ export default function CleanupTool() {
                     </div>
 
                     <div className="ms-auto d-flex align-items-center gap-2">
+                        <div className="trash-summary-chip" title={trashStatsTitle(trashStats)}>
+                            <CIcon icon={cilTrash} className="me-1" />
+                            {trashStatsLoading
+                                ? 'Checking Trash...'
+                                : trashStats?.access_blocked
+                                    ? 'Access needed'
+                                    : trashStats?.available
+                                    ? `${trashStats.top_level_items.toLocaleString()} items / ${trashStats.total_size_h}`
+                                    : 'Trash unavailable'}
+                        </div>
+                        {trashStats?.access_blocked && (
+                            <CButton size="sm" color="outline-warning" onClick={handleGrantTrashAccess} disabled={trashing}>
+                                Grant Access
+                            </CButton>
+                        )}
+                        <CButton size="sm" color="outline-secondary" onClick={refreshTrashStats} disabled={trashing || trashStatsLoading} title="Refresh Trash size">
+                            <CIcon icon={cilSync} className={trashStatsLoading ? 'spin' : ''} />
+                        </CButton>
+                        <CButton size="sm" color="outline-secondary" onClick={handleOpenTrash} disabled={trashing}>
+                            <CIcon icon={cilFolderOpen} className="me-1" />
+                            Open Trash
+                        </CButton>
                         <CButton size="sm" color="outline-secondary" onClick={selectSafe} disabled={trashing}>
                             Select Safe
                         </CButton>
@@ -170,7 +242,7 @@ export default function CleanupTool() {
                         </CButton>
                         <CButton size="sm" color="danger" onClick={trashSelected} disabled={trashing || selectedItems.length === 0}>
                             <CIcon icon={cilTrash} className="me-1" />
-                            {trashing ? 'Moving...' : `Trash ${selectedItems.length}`}
+                            {trashing ? 'Moving...' : selectedItems.length > 0 ? `Move ${selectedItems.length} to Trash` : 'Move to Trash'}
                         </CButton>
                     </div>
                 </div>
@@ -292,4 +364,15 @@ export default function CleanupTool() {
             </div>
         </div>
     );
+}
+
+function trashStatsTitle(stats) {
+    if (!stats) return 'System Trash size';
+    if (stats.access_blocked) {
+        return 'macOS blocked access to Trash size. Give this app Full Disk Access, restart if needed, then refresh.';
+    }
+    if (!stats.available) return stats.errors?.[0] || 'System Trash unavailable';
+    const roots = stats.roots?.length ? `\nRoots:\n${stats.roots.join('\n')}` : '';
+    const errors = stats.errors?.length ? `\nErrors:\n${stats.errors.join('\n')}` : '';
+    return `${stats.top_level_items.toLocaleString()} top-level items, ${stats.total_entries.toLocaleString()} total entries, ${stats.total_size_h}${roots}${errors}`;
 }

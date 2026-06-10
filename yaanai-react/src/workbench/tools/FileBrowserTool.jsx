@@ -174,7 +174,7 @@ export default function FileBrowserTool() {
                         <CBadge color="primary">{selectedPaths.size} selected</CBadge>
                         <CButton size="sm" color="danger" onClick={handleDelete} disabled={deleting}>
                             <CIcon icon={cilTrash} size="sm" className="me-1" />
-                            Trash
+                            Move to Trash
                         </CButton>
                     </>
                 )}

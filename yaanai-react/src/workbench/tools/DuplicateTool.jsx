@@ -247,7 +247,7 @@ export default function DuplicateTool() {
                     {selectedPaths.size > 0 && (
                         <CButton onClick={trashSelected} color="danger" size="sm" disabled={deleting || analyzing}>
                             <CIcon icon={cilTrash} className="me-1" />
-                            Trash {selectedPaths.size} / {formatBytes(selectedBytes)}
+                            Move {selectedPaths.size} to Trash / {formatBytes(selectedBytes)}
                         </CButton>
                     )}
                     {result && (
