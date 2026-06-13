@@ -13,7 +13,7 @@
  *   During RE_SCANNING, tools display the previous snapshot.
  *   When the new scan completes, it atomically becomes the current snapshot.
  *
- * Only ScanController can trigger scans. Tools are read-only consumers.
+ * Scan mutations go through this provider so tools share one coherent snapshot.
  */
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, startTransition } from 'react';
@@ -90,6 +90,79 @@ function buildSnapshot(version, path, tree, errors) {
     };
 }
 
+function normalizePath(path) {
+    const value = String(path || '').trim();
+    if (!value || value === '/') return value || '';
+    return value.replace(/\/+$/, '');
+}
+
+function isSameOrDescendantPath(rootPath, candidatePath) {
+    const root = normalizePath(rootPath);
+    const candidate = normalizePath(candidatePath);
+    if (!root || !candidate) return false;
+    if (root === '/') return candidate.startsWith('/');
+    return candidate === root || candidate.startsWith(`${root}/`);
+}
+
+function replaceTreeNodeByPath(tree, targetPath, replacementNode) {
+    const target = normalizePath(targetPath);
+    let replaced = false;
+
+    function replaceNode(node) {
+        if (!node) return node;
+
+        if (normalizePath(node.disk_entry?.path) === target) {
+            replaced = true;
+            return replacementNode;
+        }
+
+        const originalChildren = Array.isArray(node.children) ? node.children : [];
+        let childChanged = false;
+        const nextChildren = originalChildren.map((child) => {
+            const nextChild = replaceNode(child);
+            if (nextChild !== child) {
+                childChanged = true;
+            }
+            return nextChild;
+        });
+
+        if (!childChanged) {
+            return node;
+        }
+
+        const nextNode = {
+            ...node,
+            children: nextChildren,
+        };
+
+        const diskEntry = node.disk_entry || {};
+        if (diskEntry.is_dir) {
+            const size = nextChildren.reduce(
+                (sum, child) => sum + (child?.disk_entry?.size || 0),
+                0,
+            );
+            nextNode.disk_entry = {
+                ...diskEntry,
+                size,
+                size_h: formatBytes(size),
+            };
+        }
+
+        return nextNode;
+    }
+
+    return {
+        tree: replaceNode(tree),
+        replaced,
+    };
+}
+
+function filterRefreshErrors(errors, refreshedPath) {
+    return (errors || []).filter((error) => (
+        !isSameOrDescendantPath(refreshedPath, error?.path)
+    ));
+}
+
 function timeAgo(date) {
     if (!date) return '';
     const seconds = Math.floor((new Date() - date) / 1000);
@@ -112,6 +185,7 @@ export const ScanStateProvider = ({ children }) => {
     // --- Scan progress ---
     const [scanProgress, setScanProgress] = useState(null);
     const [scanProgressText, setScanProgressText] = useState('');
+    const scanProgressRef = useRef(null);
 
     // --- Favorites & ignore patterns ---
     const [favorites, setFavorites] = useState([]);
@@ -177,6 +251,7 @@ export const ScanStateProvider = ({ children }) => {
     useEffect(() => {
         const unlisten = listen('tree-build-progress', (event) => {
             const p = event.payload;
+            scanProgressRef.current = p;
             setScanProgress(p);
             const errCount = p.errors ? p.errors.length : 0;
             const errText = errCount > 0 ? ` (${errCount} errors)` : '';
@@ -244,6 +319,7 @@ export const ScanStateProvider = ({ children }) => {
         }
 
         setScanProgress(null);
+        scanProgressRef.current = null;
         setScanProgressText('Starting scan...');
 
         try {
@@ -251,7 +327,7 @@ export const ScanStateProvider = ({ children }) => {
             const newVersion = versionRef.current + 1;
             versionRef.current = newVersion;
 
-            const errors = scanProgress?.errors || [];
+            const errors = scanProgressRef.current?.errors || [];
             const snapshot = buildSnapshot(newVersion, scanPath, tree, errors);
 
             // Atomic swap: old current → previous, new → current
@@ -277,7 +353,74 @@ export const ScanStateProvider = ({ children }) => {
         } finally {
             setTimeout(() => setScanProgress(null), 2000);
         }
-    }, [currentPath, currentSnapshot, scanProgress]);
+    }, [currentPath, currentSnapshot]);
+
+    const refreshFolder = useCallback(async (path) => {
+        const refreshPath = normalizePath(path || currentSnapshot?.path || currentPath);
+        if (!refreshPath) return null;
+
+        if (!currentSnapshot?.tree) {
+            await startScan(refreshPath);
+            return null;
+        }
+
+        if (!isSameOrDescendantPath(currentSnapshot.path, refreshPath)) {
+            throw new Error('Folder is outside the current scan snapshot.');
+        }
+
+        setStatus(ScanStatus.RE_SCANNING);
+        setScanProgress(null);
+        scanProgressRef.current = null;
+        setScanProgressText(`Refreshing folder: ${refreshPath}`);
+
+        try {
+            const refreshedTree = await invoke("get_file_tree_with_progress", { folderName: refreshPath });
+            const replacement = replaceTreeNodeByPath(currentSnapshot.tree, refreshPath, refreshedTree);
+
+            if (!replacement.replaced) {
+                throw new Error('Folder was not found in the current scan snapshot.');
+            }
+
+            const newVersion = versionRef.current + 1;
+            versionRef.current = newVersion;
+
+            const refreshErrors = scanProgressRef.current?.errors || [];
+            const errors = [
+                ...filterRefreshErrors(currentSnapshot.errors, refreshPath),
+                ...refreshErrors,
+            ];
+            const snapshot = buildSnapshot(
+                newVersion,
+                currentSnapshot.path,
+                replacement.tree,
+                errors,
+            );
+
+            startTransition(() => {
+                setPreviousSnapshot(currentSnapshot);
+                setCurrentSnapshot(snapshot);
+                setSnapshotHistory(prev => [snapshot, ...prev].slice(0, 10));
+            });
+
+            setStaleStatus({ stale: false, changedPath: null });
+            setStatus(ScanStatus.READY);
+            setScanProgressText(
+                `Folder refreshed: ${refreshPath} | ${snapshot.fileCount} files, ${snapshot.dirCount} dirs, ${snapshot.totalSizeH}`
+            );
+
+            return snapshot;
+        } catch (error) {
+            console.error("Folder refresh failed:", error);
+            setStatus(ScanStatus.READY);
+            setScanProgressText(`Folder refresh failed: ${error}`);
+            throw error;
+        } finally {
+            setTimeout(() => {
+                setScanProgress(null);
+                scanProgressRef.current = null;
+            }, 2000);
+        }
+    }, [currentPath, currentSnapshot, startScan]);
 
     // Navigate to a path (doesn't scan — just sets path)
     const navigateTo = useCallback((path) => {
@@ -368,8 +511,9 @@ export const ScanStateProvider = ({ children }) => {
         loadSnapshot,
         scannedTimeAgo,
 
-        // Scan control (only ScanController should use this)
+        // Scan control
         startScan,
+        refreshFolder,
 
         // Progress
         scanProgress,

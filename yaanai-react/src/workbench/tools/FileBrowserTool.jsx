@@ -11,9 +11,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { useScanState } from '../state/ScanStateContext';
 import { CButton, CBadge } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
-import { cilFolder, cilFile, cilTrash, cilArrowLeft, cilExternalLink, cilImage } from '@coreui/icons';
+import { cilFolder, cilFile, cilTrash, cilArrowLeft, cilExternalLink, cilImage, cilSync, cilVideo } from '@coreui/icons';
 import { formatBytes, isDirectoryNode } from '../utils/treeAnalysis';
-import { imagePreviewSrc, isImagePath, revealInFinder } from '../utils/fileActions';
+import { filePreviewSrc, isImagePath, isPreviewableMediaPath, isVideoPath, revealInFinder } from '../utils/fileActions';
 
 // Find a node in the tree by path
 function findNode(tree, path) {
@@ -29,13 +29,15 @@ function findNode(tree, path) {
 }
 
 export default function FileBrowserTool() {
-    const { currentSnapshot, hasData } = useScanState();
+    const { currentSnapshot, hasData, refreshFolder, isScanning } = useScanState();
 
     const [browsePath, setBrowsePath] = useState(null);
     const [selectedPaths, setSelectedPaths] = useState(new Set());
     const [sortBy, setSortBy] = useState('size');
     const [sortAsc, setSortAsc] = useState(false);
     const [deleting, setDeleting] = useState(false);
+    const [refreshingPath, setRefreshingPath] = useState(null);
+    const [refreshError, setRefreshError] = useState('');
     const [previewNode, setPreviewNode] = useState(null);
     const [previewError, setPreviewError] = useState(false);
 
@@ -44,6 +46,7 @@ export default function FileBrowserTool() {
         if (currentSnapshot?.path) {
             setBrowsePath(currentSnapshot.path);
             setPreviewNode(null);
+            setRefreshError('');
         }
     }, [currentSnapshot?.path]);
 
@@ -86,6 +89,7 @@ export default function FileBrowserTool() {
         setSelectedPaths(new Set());
         setPreviewNode(null);
         setPreviewError(false);
+        setRefreshError('');
     }
 
     function navigateUp() {
@@ -96,6 +100,7 @@ export default function FileBrowserTool() {
             setSelectedPaths(new Set());
             setPreviewNode(null);
             setPreviewError(false);
+            setRefreshError('');
         }
     }
 
@@ -114,7 +119,7 @@ export default function FileBrowserTool() {
     }
 
     function openPreview(node) {
-        if (!node?.disk_entry?.path || !isImagePath(node.disk_entry.path)) return;
+        if (!node?.disk_entry?.path || !isPreviewableMediaPath(node.disk_entry.path)) return;
         setPreviewNode(node);
         setPreviewError(false);
     }
@@ -124,6 +129,21 @@ export default function FileBrowserTool() {
             await revealInFinder(path);
         } catch (error) {
             console.error("Reveal failed:", error);
+        }
+    }
+
+    async function handleRefreshFolder(path) {
+        if (!path || refreshingPath || isScanning) return;
+        setRefreshingPath(path);
+        setRefreshError('');
+        try {
+            await refreshFolder(path);
+        } catch (error) {
+            const message = error?.message || String(error);
+            setRefreshError(message);
+            console.error("Folder refresh failed:", error);
+        } finally {
+            setRefreshingPath(null);
         }
     }
 
@@ -152,7 +172,10 @@ export default function FileBrowserTool() {
 
     const previewEntry = previewNode?.disk_entry;
     const previewPath = previewEntry?.path || '';
-    const previewSrc = previewPath ? imagePreviewSrc(previewPath) : '';
+    const previewSrc = previewPath ? filePreviewSrc(previewPath) : '';
+    const previewIsImage = previewPath ? isImagePath(previewPath) : false;
+    const previewIsVideo = previewPath ? isVideoPath(previewPath) : false;
+    const previewable = previewIsImage || previewIsVideo;
 
     return (
         <div className="d-flex flex-column h-100">
@@ -169,6 +192,12 @@ export default function FileBrowserTool() {
                     {browsePath || '/'}
                 </div>
 
+                {refreshError && (
+                    <span className="text-danger text-truncate" style={{ maxWidth: '260px' }} title={refreshError}>
+                        {refreshError}
+                    </span>
+                )}
+
                 {selectedPaths.size > 0 && (
                     <>
                         <CBadge color="primary">{selectedPaths.size} selected</CBadge>
@@ -178,6 +207,21 @@ export default function FileBrowserTool() {
                         </CButton>
                     </>
                 )}
+
+                <CButton
+                    size="sm"
+                    color="light"
+                    onClick={() => handleRefreshFolder(browsePath)}
+                    disabled={!currentNode || isScanning || Boolean(refreshingPath)}
+                    title="Refresh this folder"
+                >
+                    <CIcon
+                        icon={cilSync}
+                        size="sm"
+                        className={refreshingPath === browsePath ? 'spin me-1' : 'me-1'}
+                    />
+                    {refreshingPath === browsePath ? 'Refreshing...' : 'Refresh Folder'}
+                </CButton>
 
                 <span className="text-muted">{sortedChildren.length} items</span>
             </div>
@@ -207,6 +251,9 @@ export default function FileBrowserTool() {
                                 const isDir = isDirectoryNode(child);
                                 const selected = selectedPaths.has(path);
                                 const imageFile = !isDir && isImagePath(path);
+                                const videoFile = !isDir && isVideoPath(path);
+                                const mediaFile = imageFile || videoFile;
+                                const folderRefreshing = refreshingPath === path;
 
                                 return (
                                     <tr
@@ -214,7 +261,7 @@ export default function FileBrowserTool() {
                                         className={selected ? 'table-primary' : ''}
                                         onClick={() => {
                                             if (isDir) navigateInto(path);
-                                            else if (imageFile) openPreview(child);
+                                            else if (mediaFile) openPreview(child);
                                         }}
                                     >
                                         <td onClick={(event) => event.stopPropagation()}>
@@ -240,15 +287,31 @@ export default function FileBrowserTool() {
                                         </td>
                                         <td onClick={(event) => event.stopPropagation()}>
                                             <div className="d-flex justify-content-end gap-1">
-                                                {imageFile && (
+                                                {isDir && (
+                                                    <CButton
+                                                        size="sm"
+                                                        color="light"
+                                                        className="py-0 px-1"
+                                                        onClick={() => handleRefreshFolder(path)}
+                                                        disabled={isScanning || Boolean(refreshingPath)}
+                                                        title="Refresh folder"
+                                                    >
+                                                        <CIcon
+                                                            icon={cilSync}
+                                                            size="sm"
+                                                            className={folderRefreshing ? 'spin' : ''}
+                                                        />
+                                                    </CButton>
+                                                )}
+                                                {mediaFile && (
                                                     <CButton
                                                         size="sm"
                                                         color="light"
                                                         className="py-0 px-1"
                                                         onClick={() => openPreview(child)}
-                                                        title="Preview image"
+                                                        title={videoFile ? 'Preview video' : 'Preview image'}
                                                     >
-                                                        <CIcon icon={cilImage} size="sm" />
+                                                        <CIcon icon={videoFile ? cilVideo : cilImage} size="sm" />
                                                     </CButton>
                                                 )}
                                                 <CButton
@@ -276,7 +339,7 @@ export default function FileBrowserTool() {
                     </table>
                 </div>
 
-                {previewEntry && isImagePath(previewPath) && (
+                {previewEntry && previewable && (
                     <aside className="file-preview-panel">
                         <div className="d-flex align-items-center justify-content-between mb-2">
                             <div className="fw-semibold text-truncate" title={previewEntry.name}>
@@ -287,11 +350,21 @@ export default function FileBrowserTool() {
                             </CButton>
                         </div>
                         <div className="file-preview-frame">
-                            {previewSrc && !previewError ? (
+                            {previewSrc && previewIsImage && !previewError ? (
                                 <img
                                     src={previewSrc}
                                     alt={previewEntry.name}
                                     className="file-preview-image"
+                                    onLoad={() => setPreviewError(false)}
+                                    onError={() => setPreviewError(true)}
+                                />
+                            ) : previewSrc && previewIsVideo && !previewError ? (
+                                <video
+                                    src={previewSrc}
+                                    className="file-preview-video"
+                                    controls
+                                    preload="metadata"
+                                    onLoadedMetadata={() => setPreviewError(false)}
                                     onError={() => setPreviewError(true)}
                                 />
                             ) : (

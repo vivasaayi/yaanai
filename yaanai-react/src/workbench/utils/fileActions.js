@@ -17,6 +17,19 @@ const IMAGE_EXTENSIONS = new Set([
     'webp',
 ]);
 
+const VIDEO_EXTENSIONS = new Set([
+    '3gp',
+    'avi',
+    'm4v',
+    'mkv',
+    'mov',
+    'mp4',
+    'mpeg',
+    'mpg',
+    'webm',
+    'wmv',
+]);
+
 export async function revealInFinder(path) {
     if (!path) return;
     await invoke('reveal_in_file_manager', { path });
@@ -39,13 +52,26 @@ export function isImagePath(path) {
     return IMAGE_EXTENSIONS.has(ext);
 }
 
-export function imagePreviewSrc(path) {
+export function isVideoPath(path) {
+    const ext = fileExtension(path);
+    return VIDEO_EXTENSIONS.has(ext);
+}
+
+export function isPreviewableMediaPath(path) {
+    return isImagePath(path) || isVideoPath(path);
+}
+
+export function filePreviewSrc(path) {
     if (!path) return '';
     try {
         return convertFileSrc(path);
     } catch {
         return '';
     }
+}
+
+export function imagePreviewSrc(path) {
+    return filePreviewSrc(path);
 }
 
 export function fileExtension(path) {
