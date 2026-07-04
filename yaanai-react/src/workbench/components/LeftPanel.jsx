@@ -11,22 +11,7 @@ import { CBadge, CButton } from '@coreui/react';
 import CIcon from '@coreui/icons-react';
 import { cilStar, cilHistory, cilFolder, cilTrash, cilChevronRight, cilChevronBottom, cilExternalLink } from '@coreui/icons';
 import { revealInFinder } from '../utils/fileActions';
-
-function formatBytes(bytes) {
-    if (!bytes || bytes === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
-}
-
-function timeAgo(date) {
-    if (!date) return '';
-    const seconds = Math.floor((new Date() - date) / 1000);
-    if (seconds < 60) return 'just now';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    return `${Math.floor(seconds / 86400)}d ago`;
-}
+import { formatBytes, timeAgo } from '../utils/treeAnalysis';
 
 // Mini tree node
 function TreeNodeItem({ node, depth = 0 }) {

@@ -17,6 +17,16 @@ export function formatBytes(bytes) {
     return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
 }
 
+export function timeAgo(date) {
+    if (!date) return '';
+    const seconds = Math.floor((new Date() - date) / 1000);
+    if (seconds < 5) return 'just now';
+    if (seconds < 60) return `${seconds}s ago`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    return `${Math.floor(seconds / 86400)}d ago`;
+}
+
 export function flattenTree(tree, options = {}) {
     const {
         includeRoot = false,
@@ -142,12 +152,6 @@ export const DUPLICATE_MATCH_MODES = [
     },
 ];
 
-export function buildMetadataDuplicateGroups(tree, options = {}) {
-    const state = createDuplicateState(tree, options);
-    walkFilesIterative(tree, (node) => visitDuplicateCandidate(node, state));
-    return finalizeDuplicateState(state);
-}
-
 export async function buildMetadataDuplicateGroupsAsync(tree, options = {}, onProgress = () => {}) {
     const state = createDuplicateState(tree, options);
     const chunkSize = Math.max(100, Number(options.chunkSize) || 5000);
@@ -208,21 +212,6 @@ function normalizeDuplicateOptions(options = {}) {
         minSizeBytes: Math.max(0, Number(options.minSizeBytes) || 0),
         includeZeroByte: Boolean(options.includeZeroByte),
     };
-}
-
-function walkFilesIterative(tree, visitFile) {
-    const stack = tree ? [{ node: tree, isRoot: true }] : [];
-    while (stack.length > 0) {
-        const { node, isRoot } = stack.pop();
-        if (!isRoot && isFileNode(node)) {
-            visitFile(node);
-        }
-
-        const children = Array.isArray(node?.children) ? node.children : [];
-        for (let i = children.length - 1; i >= 0; i -= 1) {
-            stack.push({ node: children[i], isRoot: false });
-        }
-    }
 }
 
 function visitDuplicateCandidate(node, state) {

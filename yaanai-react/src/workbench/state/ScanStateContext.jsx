@@ -20,7 +20,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { setTheme as setAppTheme } from '@tauri-apps/api/app';
-import { computeTreeStats, formatBytes } from '../utils/treeAnalysis';
+import { computeTreeStats, formatBytes, timeAgo } from '../utils/treeAnalysis';
 
 // Scan status enum
 export const ScanStatus = Object.freeze({
@@ -161,16 +161,6 @@ function filterRefreshErrors(errors, refreshedPath) {
     return (errors || []).filter((error) => (
         !isSameOrDescendantPath(refreshedPath, error?.path)
     ));
-}
-
-function timeAgo(date) {
-    if (!date) return '';
-    const seconds = Math.floor((new Date() - date) / 1000);
-    if (seconds < 5) return 'just now';
-    if (seconds < 60) return `${seconds}s ago`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    return `${Math.floor(seconds / 86400)}d ago`;
 }
 
 export const ScanStateProvider = ({ children }) => {
