@@ -253,6 +253,7 @@
 
 .file-browser-table {
     table-layout: fixed;
+    min-width: 720px;
     font-size: 12px;
 }
 
@@ -274,6 +275,47 @@
 
 .file-row-name.is-folder {
     cursor: pointer;
+}
+
+.file-browser-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.file-size-header {
+    width: 140px;
+    cursor: pointer;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.file-type-header {
+    width: 72px;
+    white-space: nowrap;
+}
+
+.file-actions-header {
+    width: 92px;
+}
+
+.file-size-cell {
+    overflow: visible;
+    color: var(--workbench-text) !important;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.file-type-cell {
+    overflow: hidden;
+    color: var(--workbench-muted) !important;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .file-preview-panel {

@@ -176,6 +176,7 @@ export default function FileBrowserTool() {
     const previewIsImage = previewPath ? isImagePath(previewPath) : false;
     const previewIsVideo = previewPath ? isVideoPath(previewPath) : false;
     const previewable = previewIsImage || previewIsVideo;
+    const currentSize = formatBytes(currentNode?.disk_entry?.size);
 
     return (
         <div className="d-flex flex-column h-100">
@@ -223,7 +224,10 @@ export default function FileBrowserTool() {
                     {refreshingPath === browsePath ? 'Refreshing...' : 'Refresh Folder'}
                 </CButton>
 
-                <span className="text-muted">{sortedChildren.length} items</span>
+                <span className="file-browser-summary">
+                    <strong>{currentSize}</strong>
+                    <span className="text-muted">{sortedChildren.length} items</span>
+                </span>
             </div>
 
             {/* File list */}
@@ -236,12 +240,12 @@ export default function FileBrowserTool() {
                                 <th style={{ cursor: 'pointer' }} onClick={() => toggleSort('name')}>
                                     Name {sortBy === 'name' && (sortAsc ? '\u25B2' : '\u25BC')}
                                 </th>
-                                <th style={{ width: '100px', cursor: 'pointer', textAlign: 'right' }}
+                                <th className="file-size-header"
                                     onClick={() => toggleSort('size')}>
                                     Size {sortBy === 'size' && (sortAsc ? '\u25B2' : '\u25BC')}
                                 </th>
-                                <th style={{ width: '60px' }}>Type</th>
-                                <th style={{ width: '78px' }}></th>
+                                <th className="file-type-header">Type</th>
+                                <th className="file-actions-header"></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -279,10 +283,10 @@ export default function FileBrowserTool() {
                                                 {isDir ? <strong>{name}</strong> : name}
                                             </span>
                                         </td>
-                                        <td className="text-end text-muted">
+                                        <td className="file-size-cell" title={formatBytes(child.disk_entry?.size)}>
                                             {formatBytes(child.disk_entry?.size)}
                                         </td>
-                                        <td className="text-muted">
+                                        <td className="file-type-cell">
                                             {isDir ? 'DIR' : (name.includes('.') ? name.split('.').pop().toUpperCase() : '')}
                                         </td>
                                         <td onClick={(event) => event.stopPropagation()}>
